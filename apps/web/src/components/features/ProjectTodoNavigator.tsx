@@ -203,6 +203,7 @@ function TodoGroup({
       ) : null}
       {state === "ready" ? <div className="grid gap-0.5">{rows.map((row) => {
         const visualKind = running ? "running" : row.operationalState?.kind ?? (attention ? "needs_you" : label === "Ready" ? "enabled" : "idle");
+        const announcedState = running ? "Working" : row.operationalState?.label;
         const destination = running && row.targetSessionId !== undefined
           ? `${root}/sessions/${encodeURIComponent(row.targetSessionId)}`
           : `${root}/todos/${encodeURIComponent(row.todo.id)}${attention ? "/work" : ""}`;
@@ -214,7 +215,7 @@ function TodoGroup({
         >
           <TodoNavigatorStatusMarker kind={visualKind} />
           <span className="min-w-0 flex-1 truncate">{row.label}</span>
-          {row.operationalState ? <span className="sr-only">{row.operationalState.label}</span> : null}
+          {announcedState ? <span className="sr-only" data-testid="todo-navigator-row-status">{announcedState}</span> : null}
           {attention && row.attentionCount !== undefined ? <span className="min-w-[18px] text-right font-mono text-[10.5px] tabular-nums text-warning" aria-label={`${row.attentionCount} ${row.attentionCount === 1 ? "action" : "actions"} need you`}>{row.attentionCount}</span> : null}
         </Link>
       })}</div> : null}

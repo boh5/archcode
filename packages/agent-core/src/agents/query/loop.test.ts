@@ -907,6 +907,83 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(toolEvents(harness).find((event) => event.toolCallId === "sibling")?.result.isError).toBe(false);
   });
 
+  test("lets a later same-batch success clear three earlier deterministic failures", async () => {
+    const harness = await createHarness();
+    let attempts = 0;
+    registerInline(harness, "same_batch_clear", async () => {
+      attempts += 1;
+      return attempts === 4
+        ? createTextToolResult("recovered")
+        : createToolErrorResult({
+            kind: "schema",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            message: "invalid",
+          });
+    });
+    harness.appendUser("run");
+    let modelCalls = 0;
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: Array.from({ length: 4 }, (_, index) => ({
+          toolCallId: `same-batch-clear-${index}`,
+          toolName: "same_batch_clear",
+          input: { value: "same" },
+        })),
+      },
+      { finishReason: "stop", text: "done" },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", text: "done" });
+    expect(attempts).toBe(4);
+    expect(modelCalls).toBe(2);
+    expect(toolEvents(harness)).toHaveLength(4);
+  });
+
+  test("starts a fresh count after same-batch success and stops on the next third failure", async () => {
+    const harness = await createHarness();
+    let attempts = 0;
+    registerInline(harness, "same_batch_reset", async () => {
+      attempts += 1;
+      return attempts === 4
+        ? createTextToolResult("recovered")
+        : createToolErrorResult({
+            kind: "schema",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            message: "invalid",
+          });
+    });
+    harness.appendUser("run");
+    let modelCalls = 0;
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: Array.from({ length: 4 }, (_, index) => ({
+          toolCallId: `same-batch-reset-${index}`,
+          toolName: "same_batch_reset",
+          input: { value: "same" },
+        })),
+      },
+      ...Array.from({ length: 3 }, (_, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{
+          toolCallId: `post-reset-${index}`,
+          toolName: "same_batch_reset",
+          input: { value: "same" },
+        }],
+      })),
+      { finishReason: "stop", text: "must not run" },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("TOOL_SCHEMA_INVALID_INPUT"),
+    });
+    expect(attempts).toBe(7);
+    expect(modelCalls).toBe(4);
+    expect(toolEvents(harness)).toHaveLength(7);
+  });
+
   test("rebuilds repeated failures across HITL suspension and resume", async () => {
     const harness = await createHarness();
     registerInline(harness, "invalid", async () => createToolErrorResult({

@@ -14,6 +14,22 @@ import {
   type CompressionSummarySnapshot,
 } from "./compression";
 import type { LoadedToolRef, SessionEventPayload } from "./types";
+import {
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  utf8ByteLength,
+} from "./session-capacity";
+
+function todosAtAggregateLimit() {
+  const todos = [{
+    id: "todo",
+    content: "",
+    status: "pending" as const,
+  }];
+  const remaining = MAX_SESSION_TODOS_SERIALIZED_BYTES - utf8ByteLength(JSON.stringify(todos));
+  todos[0]!.content = "x".repeat(remaining);
+  return todos;
+}
 
 function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
   return {
@@ -263,6 +279,62 @@ const validPayloads = [
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
+  test("accepts the exact Todo aggregate limit and rejects the first byte beyond it", () => {
+    const exact = todosAtAggregateLimit();
+    expect(utf8ByteLength(JSON.stringify(exact))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+    expect(isSessionEventPayload({ type: "todo-write", todos: exact })).toBe(true);
+
+    const over = exact.map((todo, index) => index === exact.length - 1
+      ? { ...todo, content: `${todo.content}x` }
+      : todo);
+    expect(utf8ByteLength(JSON.stringify(over))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES + 1);
+    expect(isSessionEventPayload({ type: "todo-write", todos: over })).toBe(false);
+  });
+
+  test("rejects a direct-child event with an invalid projected identity", () => {
+    const event = structuredClone(
+      validPayloads.find((candidate) => candidate.type === "tool-child-session-link")!,
+    );
+    if (event.type !== "tool-child-session-link") throw new Error("Missing child-link fixture");
+    const unknownAgent = structuredClone(
+      validPayloads.find((candidate) => candidate.type === "tool-child-session-link")!,
+    );
+    if (unknownAgent.type !== "tool-child-session-link") throw new Error("Missing child-link fixture");
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, childAgentName: "unknown-agent" },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, childProfile: "principal" },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, childAgentName: "lead" },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, status: "unknown" },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, title: " " },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...unknownAgent,
+      link: { ...unknownAgent.link, title: "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1) },
+    })).toBe(false);
+  });
+
+  test("accepts the exact direct-child title limit", () => {
+    const event = structuredClone(
+      validPayloads.find((candidate) => candidate.type === "tool-child-session-link")!,
+    );
+    if (event.type !== "tool-child-session-link") throw new Error("Missing child-link fixture");
+    event.link.title = "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH);
+    expect(isSessionEventPayload(event)).toBe(true);
+  });
+
   test("rejects Prompt Skill projections with forged or oversized byte counts", () => {
     const event = validPayloads.find((candidate) => candidate.type === "prompt-trace")!;
     const traceEvent = structuredClone(event);

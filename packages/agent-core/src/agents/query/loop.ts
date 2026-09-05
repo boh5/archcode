@@ -125,6 +125,11 @@ class RepeatedFailureTracker {
 
   findThreshold(): RepeatedFailure | undefined {
     const counts = new Map<string, Map<string, number>>();
+    const activeThresholds = new Map<string, {
+      readonly callKey: string;
+      readonly failure: RepeatedFailure;
+      readonly order: number;
+    }>();
     const calls = this.store.getState().toolBatches
       .filter((batch) => batch.executionId === this.executionId)
       .flatMap((batch) => batch.calls.map((call) => ({ batch, call })))
@@ -134,10 +139,13 @@ class RepeatedFailureTracker {
         || left.call.ordinal - right.call.ordinal
       ));
 
-    for (const { batch, call } of calls) {
+    for (const [order, { batch, call }] of calls.entries()) {
       const callKey = `${call.toolName}\0${canonicalizeToolInput(call.input)}`;
       if (call.result!.isError === false) {
         counts.delete(callKey);
+        for (const [signature, threshold] of activeThresholds) {
+          if (threshold.callKey === callKey) activeThresholds.delete(signature);
+        }
         continue;
       }
       const errorCode = call.result!.details?.error?.code;
@@ -146,16 +154,22 @@ class RepeatedFailureTracker {
       const next = (errorCounts.get(errorCode!) ?? 0) + 1;
       errorCounts.set(errorCode!, next);
       counts.set(callKey, errorCounts);
-      if (next >= 3) {
-        return {
-          toolName: call.toolName,
-          errorCode: errorCode!,
-          step: batch.step,
-          stepId: batch.stepId,
-        };
+      const signature = `${callKey}\0${errorCode}`;
+      if (next >= 3 && !activeThresholds.has(signature)) {
+        activeThresholds.set(signature, {
+          callKey,
+          order,
+          failure: {
+            toolName: call.toolName,
+            errorCode: errorCode!,
+            step: batch.step,
+            stepId: batch.stepId,
+          },
+        });
       }
     }
-    return undefined;
+    return [...activeThresholds.values()]
+      .sort((left, right) => left.order - right.order)[0]?.failure;
   }
 }
 

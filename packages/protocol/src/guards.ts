@@ -5,6 +5,7 @@ import type {
   GlobalSSEResourceChangedEvent,
   FinalizedToolResult,
   SessionEventPayload,
+  SessionTodo,
   StreamEvent,
   ToolChildSessionLinkStatus,
 } from "./types";
@@ -26,6 +27,10 @@ import {
   MAX_ATTACHMENT_SIZE_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "./attachments";
+import {
+  directChildContextCapacityViolation,
+  sessionTodoCapacityViolation,
+} from "./session-capacity";
 
 const TERMINAL_CHILD_SESSION_STATUSES = new Set<ToolChildSessionLinkStatus>([
   "completed", "failed", "timed_out", "cancelled", "interrupted",
@@ -180,7 +185,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "tool-child-session-link":
       return exact(event, ["type", "link"]) && isToolChildSessionLink(event.link);
     case "todo-write":
-      return exact(event, ["type", "todos"]) && arrayOf(event.todos, isSessionTodo);
+      return exact(event, ["type", "todos"])
+        && isSessionTodoArray(event.todos)
+        && sessionTodoCapacityViolation(event.todos) === undefined;
     case "reminder":
       return exact(event, ["type", "reminder"]) && isReminder(event.reminder);
     case "reminder-consumed":
@@ -741,7 +748,11 @@ export function isTerminalChildSessionStatus(
   return TERMINAL_CHILD_SESSION_STATUSES.has(status);
 }
 
-function isSessionTodo(value: unknown): boolean {
+function isSessionTodoArray(value: unknown): value is SessionTodo[] {
+  return Array.isArray(value) && value.every(isSessionTodo);
+}
+
+function isSessionTodo(value: unknown): value is SessionTodo {
   const todo = record(value);
   return todo !== undefined
     && exact(todo, ["id", "content", "status"], ["createdAt", "updatedAt"])
@@ -759,12 +770,20 @@ function isToolChildSessionLink(value: unknown): boolean {
       ["startedAt", "endedAt", "durationMs", "durationUpdatedAt", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
-    && isString(link.childSessionId) && isString(link.childExecutionId) && isString(link.childAgentName)
-    && oneOf(link.childProfile, ["principal", "deep", "fast"])
+    && isString(link.childSessionId) && isString(link.childExecutionId)
+    && isString(link.childAgentName) && isString(link.childProfile)
     && Array.isArray(link.childSkillNames) && link.childSkillNames.every(isString)
     && isFiniteNumber(link.depth) && typeof link.background === "boolean"
-    && oneOf(link.status, ["linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted"])
+    && isString(link.status)
     && isFiniteNumber(link.createdAt) && isString(link.title)
+    && directChildContextCapacityViolation([{
+      sessionId: link.childSessionId,
+      agentName: link.childAgentName,
+      profile: link.childProfile as string,
+      title: link.title,
+      executionId: link.childExecutionId,
+      status: link.status as string,
+    }]) === undefined
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
     && optionalFiniteNumber(link.durationMs)
     && optionalFiniteNumber(link.durationUpdatedAt)

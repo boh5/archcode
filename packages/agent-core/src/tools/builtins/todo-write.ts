@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  MAX_SESSION_TODOS,
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  sessionTodoCapacityViolation,
+  utf8ByteLength,
+} from "@archcode/protocol";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -19,9 +25,23 @@ export const TodoWriteInputSchema = z
           status: z.enum(TODO_STATUSES).describe("`pending` not started; `in_progress` actively being worked; `completed` fully finished and verified; `cancelled` no longer needed."),
         })
         .strict(),
-    ).describe("Full replacement list. Omitting an existing item removes it, so include every item that should remain."),
+    ).max(MAX_SESSION_TODOS).describe(`Full replacement list with at most ${MAX_SESSION_TODOS} items and ${MAX_SESSION_TODOS_SERIALIZED_BYTES} serialized UTF-8 bytes. Omitting an existing item removes it, so include every item that should remain.`),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => {
+    const normalizedTodos = input.todos.map((todo, index) => ({
+      ...todo,
+      id: todo.id ?? `todo-${index + 1}`,
+    }));
+    const capacityViolation = sessionTodoCapacityViolation(normalizedTodos);
+    if (capacityViolation !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["todos"],
+        message: capacityViolation,
+      });
+    }
+  });
 
 export type TodoWriteInput = z.infer<typeof TodoWriteInputSchema>;
 
@@ -87,6 +107,16 @@ export const todoWriteTool = defineTool({
       ...todo,
       id: todo.id ?? `todo-${index + 1}`,
     }));
+
+    const capacityViolation = sessionTodoCapacityViolation(todos);
+    if (capacityViolation !== undefined) {
+      return createToolErrorResult({
+        kind: "todo-validation",
+        code: "TOOL_TODO_CAPACITY_EXCEEDED",
+        message: capacityViolation,
+        hint: "Replace the complete list with fewer or shorter actionable items; do not retry the same oversized list.",
+      });
+    }
 
     // 2. Check for duplicate IDs
     const idSet = new Set<string>();

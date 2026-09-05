@@ -563,6 +563,12 @@ column rather than leaving an empty rail.
   request. Manual sheet state is keyed by `hitlId` for the current route
   lifecycle, survives remount/SSE updates, and is removed when that request is
   no longer pending.
+- If an accepted answer or permission cannot be delivered back to its suspended
+  execution, keep the attention card visible but present it truthfully as
+  **Inspection · Manual inspection**, open it by default, and explain that it
+  can no longer accept actions. This inspection state does not retain the
+  request's pending disclosure state, expand the pending-only dock cap, show
+  Composer `Needs you`, or block ordinary Composer input.
 - **Next model picker** (prototype `composer-model-picker`):
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).

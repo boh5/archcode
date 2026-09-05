@@ -195,7 +195,7 @@ describe("SessionStoreManager", () => {
       agentName: overrides.parentSessionId === undefined ? "lead" : "explore",
       activeSkillNames: [],
       modelSelection: { revision: 0 },
-      title: null,
+      title: overrides.parentSessionId === undefined ? null : delegationRequest.title,
       messages: [],
       pendingMessages: [],
       inputRequestReceipts: [],
@@ -852,7 +852,9 @@ describe("SessionStoreManager", () => {
         updatedAt: input.createdAt ?? 1000,
         agentName: input.parentSessionId === undefined ? "lead" : "explore",
         activeSkillNames: input.activeSkillNames ?? [],
-        title: input.title ?? null,
+        title: input.title !== undefined
+          ? input.title
+          : input.parentSessionId === undefined ? null : "Test child",
         rootSessionId: input.rootSessionId ?? input.sessionId,
         ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
       }),

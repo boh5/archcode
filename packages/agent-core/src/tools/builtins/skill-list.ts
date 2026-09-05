@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DELEGATED_AGENT_NAMES } from "@archcode/protocol";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -7,7 +8,7 @@ import { DigestBoundCursorError } from "../../skills";
 
 export const SkillListInputSchema = z.object({
   cursor: z.string().min(1).optional(),
-  agent_type: z.enum(["analyst", "build", "explore", "librarian"]).optional(),
+  agent_type: z.enum(DELEGATED_AGENT_NAMES).optional(),
 }).strict();
 
 type SkillListInput = z.infer<typeof SkillListInputSchema>;

@@ -893,6 +893,48 @@ describe("ConfiguredAgent", () => {
     ])}`);
   });
 
+  test.each([
+    ["Agent identity", { childAgentName: "unknown-agent" }],
+    ["Profile", { childProfile: "principal" }],
+    ["status", { status: "unknown" }],
+  ] as const)("fails closed before a model call for an invalid direct-child %s", async (_label, corruption) => {
+    const streamFn = setupMockStreamText("must not run");
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const rootSessionId = store.getState().rootSessionId;
+    const link = {
+      parentSessionId: rootSessionId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      childSessionId: "child",
+      childExecutionId: "execution",
+      childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
+      title: "Child reference",
+      depth: 1,
+      background: false,
+      status: "completed",
+      createdAt: 1,
+      ...corruption,
+    } as unknown as ToolChildSessionLink;
+    store.setState({
+      childSessionLinks: [link],
+    });
+
+    const agent = createAgent({ definition: leadAgentDefinition, store });
+    expect(() => (agent as unknown as {
+      resolveCurrentDirectChildren: (links: readonly ToolChildSessionLink[]) => unknown;
+    }).resolveCurrentDirectChildren(store.getState().childSessionLinks)).toThrow(
+      "Current direct-child context violates its durable capacity",
+    );
+
+    await expect(runAgent(
+      agent,
+      "project current runtime state",
+    )).rejects.toThrow("Current direct-child context violates its durable capacity");
+    expect(streamFn).not.toHaveBeenCalled();
+  });
+
   test("derives the Todo Discussion Prompt and shape-todo lifecycle from formal identity", async () => {
     const streamFn = setupMockStreamText("discussion shaped");
     const sessionId = crypto.randomUUID();

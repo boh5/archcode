@@ -130,9 +130,9 @@ const PROJECT_TODO_FIELD_PREFIXES = [
 export function projectTodoDisplayLead(content: string): string {
   const lines = nonFencedTodoLines(content);
   const concreteH1 = lines
-    .map((line) => line.match(/^#\s+(.+?)\s*#*\s*$/u)?.[1])
-    .map((candidate) => candidate === undefined ? undefined : normalizeTodoDisplayLine(candidate))
-    .find((candidate): candidate is string => candidate !== undefined && isConcreteTodoDisplayLine(candidate));
+    .filter((line) => /^#[ \t]+/u.test(line))
+    .map(normalizeTodoDisplayLine)
+    .find(isConcreteTodoDisplayLine);
   const concreteBody = lines
     .map(normalizeTodoDisplayLine)
     .find(isConcreteTodoDisplayLine);
@@ -157,7 +157,11 @@ export function projectTodoPreviewExcerpt(content: string): string {
 }
 
 function normalizeTodoDisplayLine(line: string): string {
-  const plain = line
+  const atxHeading = /^#{1,6}[ \t]+/u.test(line);
+  const withoutClosingSequence = atxHeading
+    ? line.replace(/[ \t]+#+[ \t]*$/u, "")
+    : line;
+  const plain = withoutClosingSequence
     .replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
     .replace(/^\[[ xX]\]\s*/u, "")
     .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")

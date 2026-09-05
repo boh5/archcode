@@ -1,10 +1,2 @@
-export const AGENT_NAMES = [
-  "lead",
-  "discussion",
-  "analyst",
-  "build",
-  "explore",
-  "librarian",
-] as const;
-
-export type AgentName = (typeof AGENT_NAMES)[number];
+export { AGENT_NAMES } from "@archcode/protocol";
+export type { AgentName } from "@archcode/protocol";

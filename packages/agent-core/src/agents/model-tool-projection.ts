@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { DelegatedSessionTitleSchema } from "../delegation/schema";
 import { TOOL_DELEGATE, TOOL_SKILL_LIST } from "../tools/names";
 import type { AnyToolDescriptor } from "../tools/types";
 import type { DelegationCapabilitySnapshot } from "./factory-types";
@@ -48,7 +49,7 @@ function projectDelegateDescriptor(
       profile: z.enum(asNonEmptyEnum(profiles)).describe(
         `Allowed Profile union for visible targets. Exact target mapping: ${profileMapping}.`,
       ),
-      title: z.string().min(1).describe("Short user-facing title for the child Session."),
+      title: DelegatedSessionTitleSchema,
       objective: z.string().min(1).describe("Self-contained task-specific handoff for the fresh child."),
       skills: z.array(z.string()).describe(
         "Exact target Skill names copied from skill_list({ agent_type }); use [] when no workflow Skill is needed.",

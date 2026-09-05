@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { lstat } from "node:fs/promises";
 import {
+  directChildContextCapacityViolation,
+  projectLatestDirectChildContext,
   PROJECT_STATE_DIR_NAME,
   TOOL_BACKGROUND_OUTPUT,
   TOOL_CANCEL_SESSION,
@@ -405,6 +407,10 @@ export class ConfiguredAgent implements Agent {
       await this.refreshAgentsMd();
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
       const state = this.store.getState();
+      // Reject malformed legacy or externally corrupted child state before any model boundary.
+      // The same assertion runs again while rebuilding Current Context because children may
+      // change between model steps.
+      this.resolveCurrentDirectChildren(state.childSessionLinks);
       this.assertExecutionToolState(executionId, toolAuthorizationSnapshot, loadedToolRefs);
       const initialCatalog = await this.resolveLiveAuthorizedToolCatalog(toolAuthorizationSnapshot);
       const allowedTools = initialCatalog.localAuthorizedTools;
@@ -745,18 +751,16 @@ export class ConfiguredAgent implements Agent {
     readonly sessionId: string;
     readonly agentName: string;
     readonly profile: string;
-    readonly title: string | null;
+    readonly title: string;
     readonly executionId: string | null;
     readonly status: string;
   }[] {
-    return latestDirectChildLinks(childSessionLinks).map((link) => ({
-      sessionId: link.childSessionId,
-      agentName: link.childAgentName,
-      profile: link.childProfile,
-      title: link.title,
-      executionId: link.childExecutionId,
-      status: link.status,
-    }));
+    const directChildren = projectLatestDirectChildContext(childSessionLinks);
+    const capacityViolation = directChildContextCapacityViolation(directChildren);
+    if (capacityViolation !== undefined) {
+      throw new Error(`Current direct-child context violates its durable capacity: ${capacityViolation}`);
+    }
+    return directChildren;
   }
 
   private async resolveMemorySnapshot(

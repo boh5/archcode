@@ -32,14 +32,15 @@ describe("HITL card response contract", () => {
     expect(source).toContain('SECONDARY_ACTION_CLASS = "h-8 rounded-sm');
   });
 
-  test("keeps each pending request as an accessible independent disclosure", () => {
+  test("keeps each attention request as an accessible truthful disclosure", () => {
     const source = readFileSync(new URL("./HitlCard.tsx", import.meta.url), "utf8");
     expect(source).toContain('data-testid="hitl-card-toggle"');
     expect(source).toContain("aria-expanded={expanded}");
     expect(source).toContain("aria-controls={bodyId}");
     expect(source).toContain("hidden={!expanded}");
     expect(source).toContain('"Question" : "Permission"');
-    expect(source).toContain(">Pending<");
+    expect(source).toContain('? "Inspection"');
+    expect(source).toContain('requiresInspection ? "Manual inspection" : "Pending"');
     expect(source).toContain("`${requestPosition}/${requestCount}`");
   });
 

@@ -146,11 +146,16 @@ describe("delegate request", () => {
       code: "DELEGATION_PROFILE_NOT_ALLOWED",
       name: "DelegationExecutionAdmissionError",
     });
+    const capacityError = Object.assign(new Error("Direct child capacity reached"), {
+      code: "DELEGATION_SESSION_CAPACITY_REACHED",
+      name: "DelegationExecutionAdmissionError",
+    });
     const cases: readonly [string, Error, string][] = [
       ["delegate target", new DelegateTargetNotAllowedError("lead", "build", 3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["missing child policy", new AgentChildPolicyMissingError("lead"), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["depth limit", new DepthLimitError(3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["profile", profileError, "TOOL_DELEGATE_PROFILE_NOT_ALLOWED"],
+      ["capacity", capacityError, "TOOL_DELEGATE_SESSION_CAPACITY_REACHED"],
       ["missing Skill", new SkillNotFoundError("research-docs"), "TOOL_DELEGATE_SKILL_NOT_FOUND"],
       ["invalid Skill", new SkillValidationError("research-docs", "project-archcode", "missing SKILL.md"), "TOOL_DELEGATE_SKILL_INVALID"],
       ["disallowed Skill", new SkillNotAllowedError("explore", "research-docs", ["codemap"]), "TOOL_DELEGATE_SKILL_NOT_ALLOWED"],

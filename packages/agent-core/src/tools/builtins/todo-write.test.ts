@@ -3,6 +3,11 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { StoreApi } from "zustand";
+import {
+  MAX_SESSION_TODOS,
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  utf8ByteLength,
+} from "@archcode/protocol";
 import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { inferToolErrorKindFromResult } from "../errors";
@@ -52,6 +57,17 @@ function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {
   };
 }
 
+function todosAtAggregateLimit() {
+  const todos = [{
+    id: "todo",
+    content: "",
+    status: "pending" as const,
+  }];
+  const remaining = MAX_SESSION_TODOS_SERIALIZED_BYTES - utf8ByteLength(JSON.stringify(todos));
+  todos[0]!.content = "x".repeat(remaining);
+  return todos;
+}
+
 describe("TodoWriteInputSchema", () => {
   test("accepts valid input", () => {
     const result = TodoWriteInputSchema.safeParse({
@@ -91,9 +107,42 @@ describe("TodoWriteInputSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  test("enforces item count at the public schema", () => {
+    expect(TodoWriteInputSchema.safeParse({
+      todos: Array.from({ length: MAX_SESSION_TODOS + 1 }, () => ({
+        content: "ok",
+        status: "pending",
+      })),
+    }).success).toBe(false);
+  });
+
+  test("enforces the exact aggregate byte boundary at the public schema", () => {
+    const exact = todosAtAggregateLimit();
+    expect(utf8ByteLength(JSON.stringify(exact))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+    expect(TodoWriteInputSchema.safeParse({ todos: exact }).success).toBe(true);
+
+    const over = exact.map((todo, index) => index === exact.length - 1
+      ? { ...todo, content: `${todo.content}x` }
+      : todo);
+    expect(utf8ByteLength(JSON.stringify(over))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES + 1);
+    expect(TodoWriteInputSchema.safeParse({ todos: over }).success).toBe(false);
+  });
 });
 
 describe("todoWriteTool", () => {
+  test("writes a list at the exact aggregate byte capacity", async () => {
+    const store = makeStore();
+    const result = await todoWriteTool.execute(
+      { todos: todosAtAggregateLimit() },
+      makeCtx(store),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(utf8ByteLength(JSON.stringify(store.getState().todos)))
+      .toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+  });
+
   test("first call stores ordered todos", async () => {
     const store = makeStore();
     const ctx = makeCtx(store);
@@ -219,6 +268,31 @@ describe("todoWriteTool", () => {
 
     const after = store.getState().todos;
     expect(after).toEqual(before);
+  });
+
+  test("aggregate byte overflow returns a stable error and leaves previous todos unchanged", async () => {
+    const store = makeStore();
+    const ctx = makeCtx(store);
+    await todoWriteTool.execute(
+      { todos: [{ id: "existing", content: "previous", status: "in_progress" }] },
+      ctx,
+    );
+    const before = store.getState().todos;
+
+    const exact = todosAtAggregateLimit();
+    const result = await todoWriteTool.execute({
+      todos: exact.map((todo, index) => index === exact.length - 1
+        ? { ...todo, content: `${todo.content}x` }
+        : todo),
+    }, ctx);
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error).toMatchObject({
+      kind: "todo-validation",
+      code: "TOOL_TODO_CAPACITY_EXCEEDED",
+    });
+    expect(result.details?.error?.hint).toContain("do not retry the same oversized list");
+    expect(store.getState().todos).toBe(before);
   });
 
   test("deterministic ID generation", async () => {

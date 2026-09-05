@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod/v4";
+import {
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
+} from "@archcode/protocol";
+import { DelegationRequestSchema } from "../delegation/schema";
 import { delegateTool } from "../tools/builtins/delegate";
 import { skillListTool } from "../tools/builtins/skill-list";
 import { skillReadTool } from "../tools/builtins/skill-read";
@@ -59,7 +63,6 @@ describe("projectModelToolDescriptors", () => {
     ]));
     const serialized = JSON.stringify(schemas);
 
-    expect(serialized).not.toContain("pattern");
     expect(serialized).not.toContain("lookahead");
     expect(serialized).not.toContain("lookaround");
     expect(schemas.delegate).toMatchObject({
@@ -123,6 +126,35 @@ describe("projectModelToolDescriptors", () => {
     expect(properties.agent_type).toBeUndefined();
     expect(properties.cursor).toBeDefined();
     expect(JSON.stringify(jsonSchema(aiTools.skill_read!.inputSchema))).not.toContain("pattern");
+  });
+
+  test("keeps the AI-facing delegated title boundary identical to runtime admission", () => {
+    const [projected] = projectModelToolDescriptors(
+      [delegateTool],
+      capabilities([Object.freeze({
+        agentName: "explore",
+        profiles: Object.freeze(["fast"] as const),
+        builtinSkillNames: Object.freeze([]),
+      })]),
+    );
+    const aiSchema = projected!.aiInputSchema as z.ZodType;
+    const request = (title: string) => ({
+      agent_type: "explore",
+      profile: "fast",
+      title,
+      objective: "Inspect the delegated scope.",
+      skills: [],
+      background: false,
+    });
+
+    for (const [title, accepted] of [
+      [" ", false],
+      ["t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH), true],
+      ["t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1), false],
+    ] as const) {
+      expect(aiSchema.safeParse(request(title)).success).toBe(accepted);
+      expect(DelegationRequestSchema.safeParse(request(title)).success).toBe(accepted);
+    }
   });
 
   test("fails closed if delegate is visible without an allowed target", () => {

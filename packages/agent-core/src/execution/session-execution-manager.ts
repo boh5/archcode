@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import {
+  MAX_DIRECT_CHILD_SESSIONS,
   isTerminalChildSessionStatus,
   TOOL_TOOL_SEARCH,
   type DelegationRequest,
@@ -49,7 +50,7 @@ import {
   SessionToolBatchActiveError,
 } from "../agents/errors";
 import { classifyChildFinalOutput, finalOutputForExecution } from "../delegation/final-output";
-import { DelegationRequestSchema } from "../delegation/schema";
+import { DelegatedSessionTitleSchema, DelegationRequestSchema } from "../delegation/schema";
 import type {
   ChildExecutionHandle,
   ChildExecutionOutcome,
@@ -478,7 +479,8 @@ export class DelegationExecutionAdmissionError extends Error {
   constructor(
     public readonly code:
       | "DELEGATION_IDENTITY_REQUIRED"
-      | "DELEGATION_PROFILE_NOT_ALLOWED",
+      | "DELEGATION_PROFILE_NOT_ALLOWED"
+      | "DELEGATION_SESSION_CAPACITY_REACHED",
     message: string,
   ) {
     super(message);
@@ -2605,7 +2607,7 @@ export class SessionExecutionManager {
       childSlotReserved = false;
       await execution.started;
       this.#supersedeChildReminders(request.parentStore, childSessionId);
-      this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
+      this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, request.request.agent_type, currentDepth + 1, "running", childTitle, createdAt, background);
       childLinked = true;
       releaseChildLaunch();
       childLaunchReserved = false;
@@ -2627,7 +2629,7 @@ export class SessionExecutionManager {
       if (execution !== undefined) await this.#releaseExecutionChildSlot(execution);
       if (childStore !== undefined) {
         if (childLinked) {
-          this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "failed", childTitle, createdAt, background);
+          this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, request.request.agent_type, currentDepth + 1, "failed", childTitle, createdAt, background);
           await this.#config.flushSessionStore(request.parentSessionId, workspaceRoot);
         } else {
           this.#config.deleteSessionStore(childSessionId, workspaceRoot);
@@ -2684,7 +2686,7 @@ export class SessionExecutionManager {
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const settledExecution = childStore.getState().executions.find((candidate) => candidate.id === execution.executionId);
         const status = childTerminalStatus(settledExecution, execution.abortController.signal);
-        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt, background);
+        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, request.request.agent_type, currentDepth + 1, status, childTitle, createdAt, background);
         await this.#updateAllChildLinksForExecution(
           workspaceRoot,
           childSessionId,
@@ -2781,7 +2783,7 @@ export class SessionExecutionManager {
           toolName: "send_message",
           childSessionId: input.childState.sessionId,
           childExecutionId: input.childExecutionId,
-          childAgentName: input.childState.agentName,
+          childAgentName: delegation.agent_type,
           childProfile: delegation.profile,
           childSkillNames: [...input.childState.activeSkillNames],
           title: input.childState.title,
@@ -3087,7 +3089,7 @@ export class SessionExecutionManager {
           toolName: exactBatchCall.call.toolName,
           childSessionId,
           childExecutionId: currentExecution.id,
-          childAgentName: childState.agentName,
+          childAgentName: delegation.agent_type,
           childProfile: delegation.profile,
           childSkillNames: [...childState.activeSkillNames],
           title: childState.title,
@@ -3392,10 +3394,7 @@ export class SessionExecutionManager {
     let childState = initialAdmission.childState;
     await this.#assertFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
     this.#assertSessionToolBatchReady(request.sessionId, childState);
-    if (childState.title === null || childState.title.trim().length === 0) {
-      throw new Error(`Child Session "${request.sessionId}" has no canonical title`);
-    }
-    const childTitle = childState.title;
+    let childTitle = requireCanonicalChildTitle(childState);
     if (childState.parentSessionId !== request.parentSessionId) {
       throw new ChildSessionParentMismatchError(request.sessionId, request.parentSessionId, childState.parentSessionId);
     }
@@ -3432,6 +3431,7 @@ export class SessionExecutionManager {
           );
         }
         childState = finalAdmission.childState;
+        childTitle = requireCanonicalChildTitle(childState);
         await this.#assertFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
         childLaunch.signal.throwIfAborted();
         this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
@@ -3478,7 +3478,7 @@ export class SessionExecutionManager {
           workspaceRoot,
           request,
           existingLink,
-          childState.agentName,
+          childState.delegationRequest!.agent_type,
           childTitle,
           childDepth,
           "running",
@@ -3554,7 +3554,7 @@ export class SessionExecutionManager {
           workspaceRoot,
           request,
           existingLink,
-          childState.agentName,
+          childState.delegationRequest!.agent_type,
           childTitle,
           childDepth,
           status,
@@ -4778,6 +4778,23 @@ export class SessionExecutionManager {
       throw new SessionFamilyStopInProgressError(childSessionId, rootSessionId);
     }
 
+    const parentStore = this.#config.getSessionStore(parentSessionId, workspaceRoot);
+    const existingChildIds = new Set(
+      parentStore?.getState().childSessionLinks.map((link) => link.childSessionId) ?? [],
+    );
+    const pendingChildIds = new Set(
+      [...(this.#pendingChildLaunches.get(key)?.launches.values() ?? [])]
+        .filter((launch) => launch.parentSessionId === parentSessionId)
+        .map((launch) => launch.sessionId),
+    );
+    const prospectiveChildIds = new Set([...existingChildIds, ...pendingChildIds, childSessionId]);
+    if (prospectiveChildIds.size > MAX_DIRECT_CHILD_SESSIONS) {
+      throw new DelegationExecutionAdmissionError(
+        "DELEGATION_SESSION_CAPACITY_REACHED",
+        `Session "${parentSessionId}" already owns the maximum ${MAX_DIRECT_CHILD_SESSIONS} direct child Sessions; resume an existing child instead of creating another one`,
+      );
+    }
+
     const token = Symbol(`child-launch:${childSessionId}`);
     const abortController = new AbortController();
     const family = this.#pendingChildLaunches.get(key) ?? {
@@ -4950,7 +4967,7 @@ export class SessionExecutionManager {
     workspaceRoot: string,
     request: ChildExecutionRequest,
     childSessionId: string,
-    childAgentName: string,
+    childAgentName: ToolChildSessionLink["childAgentName"],
     depth: number,
     status: ToolChildSessionLinkStatus,
     title: string,
@@ -4998,7 +5015,7 @@ export class SessionExecutionManager {
     workspaceRoot: string,
     request: ResumeChildRequest,
     existingLink: ToolChildSessionLink | undefined,
-    childAgentName: AgentName,
+    childAgentName: ToolChildSessionLink["childAgentName"],
     childTitle: string,
     depth: number,
     status: ToolChildSessionLinkStatus,
@@ -5295,6 +5312,7 @@ export class SessionExecutionManager {
 
   #assertDurableChildDelegationIdentity(state: SessionStoreState): void {
     if (state.parentSessionId === undefined) return;
+    requireCanonicalChildTitle(state);
     const request = state.delegationRequest;
     if (request === undefined) {
       throw new DelegationExecutionAdmissionError(
@@ -5340,6 +5358,17 @@ export class SessionExecutionManager {
     });
   }
 
+}
+
+function requireCanonicalChildTitle(state: SessionStoreState): string {
+  const parsed = DelegatedSessionTitleSchema.safeParse(state.title);
+  if (!parsed.success) {
+    throw new DelegationExecutionAdmissionError(
+      "DELEGATION_IDENTITY_REQUIRED",
+      `Child Session "${state.sessionId}" has an invalid canonical title`,
+    );
+  }
+  return parsed.data;
 }
 
 function executionSkillSnapshotKey(

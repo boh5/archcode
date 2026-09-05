@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { SkillService } from "../../skills";
+import { agentDefinitions } from "../../agents/definitions";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
@@ -125,6 +126,28 @@ ENTRY_BODY
 
     const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
     expect(expectTextDraft(result)).toContain("Resources: none\n\n\nENTRY_BODY\n");
+  });
+
+  test("the documented entry-first flow can read a real builtin entry and resource for every Agent", async () => {
+    for (const definition of agentDefinitions) {
+      const entry = await skillReadTool.execute(
+        { name: "codemap" },
+        makeContext(definition.skills),
+      );
+      expect(entry.isError, definition.name).not.toBe(true);
+      expect(expectTextDraft(entry), definition.name).toContain(
+        "- references/evidence-map-example.md",
+      );
+
+      const resource = await skillReadTool.execute(
+        { name: "codemap", resource: "references/evidence-map-example.md" },
+        makeContext(definition.skills),
+      );
+      expect(resource.isError, definition.name).not.toBe(true);
+      expect(expectTextDraft(resource), definition.name).toContain(
+        "resource: references/evidence-map-example.md",
+      );
+    }
   });
 
   test("resource read returns exactly one UTF-8 resource with a fixed identity header", async () => {
@@ -422,17 +445,22 @@ Broken body.
     expect(serialized).toContain("current-Agent Skill name");
     expect(serialized).toContain("target-scoped delegation result");
     const properties = schema.properties as Record<string, { readonly description?: string }>;
-    expect(properties.name?.description).toContain('skill_read({"name":"run-goal"})');
-    expect(properties.resource?.description).toContain('skill_read({"name":"run-goal","resource":"references/example.md"})');
-    expect(serialized).toContain("PLACEHOLDER");
+    expect(properties.name?.description).toContain("call skill_list({})");
+    expect(properties.name?.description).toContain("copy one returned name value");
+    expect(properties.resource?.description).toContain("first call with only the copied name");
+    expect(properties.resource?.description).toContain("copy one listed resource path");
+    expect(serialized).not.toContain("codemap");
   });
 
   test("description teaches entry-first reads and rejects guessed paths", () => {
-    expect(skillReadTool.description).toContain('skill_read({"name":"run-goal"})');
-    expect(skillReadTool.description).toContain('skill_read({"name":"run-goal","resource":"references/example.md"})');
-    for (const forbidden of ["/", ":first", "first", "new", "invalid", "PLACEHOLDER"]) {
-      expect(skillReadTool.description).toContain(forbidden);
-    }
+    expect(skillReadTool.description).toContain("call `skill_list({})`");
+    expect(skillReadTool.description).toContain('{"name": copiedName}');
+    expect(skillReadTool.description).toContain(
+      '{"name": copiedName, "resource": copiedResourcePath}',
+    );
+    expect(skillReadTool.description).toContain("not literal strings to submit");
+    expect(skillReadTool.description).toContain("Never guess either field");
+    expect(skillReadTool.description).not.toContain("codemap");
   });
 
   test("has correct read-only concurrency-safe traits and is registered", () => {

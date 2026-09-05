@@ -68,7 +68,11 @@ export function HitlDecisionCard({
   const allAnswered = resolvedAnswers.every((answer) => answer.length > 0);
   const showSummary = view.displayPayload.summary !== undefined
     && (view.source.type !== "ask_user" || !items.some((item) => item.question === view.displayPayload.summary));
-  const requestKind = view.source.type === "ask_user" ? "Question" : "Permission";
+  const requiresInspection = view.requiresInspection === true;
+  const requestKind = requiresInspection
+    ? "Inspection"
+    : view.source.type === "ask_user" ? "Question" : "Permission";
+  const requestStatus = requiresInspection ? "Manual inspection" : "Pending";
   const requestSummary = view.source.type === "ask_user"
     ? items[0]?.question ?? view.displayPayload.summary ?? view.displayPayload.title
     : view.displayPayload.title;
@@ -230,7 +234,9 @@ export function HitlDecisionCard({
       >
         <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.045em] text-warning">
           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-warning-muted">
-            {view.source.type === "ask_user"
+            {requiresInspection
+              ? <ShieldAlert size={12} aria-hidden="true" />
+              : view.source.type === "ask_user"
               ? <MessageCircleQuestion size={12} aria-hidden="true" />
               : <ShieldAlert size={12} aria-hidden="true" />}
           </span>
@@ -239,7 +245,7 @@ export function HitlDecisionCard({
         <strong className="min-w-0 truncate text-[12px] font-semibold leading-5 text-text-primary">
           {requestSummary}
         </strong>
-        <span className="shrink-0 text-[10px] font-semibold text-warning">Pending</span>
+        <span className="shrink-0 text-[10px] font-semibold text-warning">{requestStatus}</span>
         <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums text-text-tertiary">
           {requestCount > 1 ? `${requestPosition}/${requestCount}` : null}
           <ChevronDown

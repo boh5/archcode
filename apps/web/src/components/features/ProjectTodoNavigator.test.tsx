@@ -40,7 +40,7 @@ describe("ProjectTodoNavigator", () => {
     const projection: ProjectTodoNavigationProjection = {
       allTodos: { count: 2, current: false, state: "ready" },
       needsYou: { count: 1, state: "ready", rows: [{ todo, label: "Active work", current: true, attentionCount: 3 }] },
-      running: { count: 1, state: "ready", rows: [{ todo: runningTodo, label: "Running work", current: false, targetSessionId: "work-1" }] },
+      running: { count: 1, state: "ready", rows: [{ todo: runningTodo, label: "Running work", current: false, targetSessionId: "work-1", operationalState: { label: "Failed", kind: "failed" } }] },
       inProgress: { count: 1, state: "ready", rows: [{ todo, label: "Active work", current: false, operationalState: { label: "Ready to review", kind: "completed" } }] },
       ready: { count: 0, state: "ready", rows: [] },
       runs: { count: 2, current: false, state: "ready" },
@@ -59,7 +59,10 @@ describe("ProjectTodoNavigator", () => {
     const needsLink = document.querySelector('a[href="/projects/demo/todos/active/work"]');
     expect(needsLink).not.toBeNull();
     expect(needsLink?.querySelector('[aria-label="3 actions need you"]')?.textContent).toBe("3");
-    expect(document.querySelector('a[href="/projects/demo/sessions/work-1"]')?.querySelector('[data-navigator-status="live"]')).not.toBeNull();
+    const runningLink = document.querySelector('a[href="/projects/demo/sessions/work-1"]');
+    expect(runningLink?.querySelector('[data-navigator-status="live"]')).not.toBeNull();
+    expect(runningLink?.querySelector('[data-testid="todo-navigator-row-status"]')?.textContent).toBe("Working");
+    expect(runningLink?.textContent).not.toContain("Failed");
     const lifecycleLink = document.querySelector('a[href="/projects/demo/todos/active"]');
     expect(lifecycleLink?.querySelector('[data-navigator-status="review"]')?.className).toContain("bg-brand");
     expect(lifecycleLink?.textContent).toContain("Ready to review");

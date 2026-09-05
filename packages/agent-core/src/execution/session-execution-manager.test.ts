@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import {
+  MAX_DIRECT_CHILD_SESSIONS,
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
   createEmptySessionStats,
   isTerminalChildSessionStatus,
   TOOL_TOOL_SEARCH,
@@ -208,15 +210,22 @@ function createTestSession(
   const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
     ? { ...options, source: { kind: "direct" } as const }
     : options;
-  if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationRequest !== undefined) {
+  if (normalizedOptions.parentSessionId === undefined) {
     return manager.create(sessionId, root, normalizedOptions);
+  }
+  const title = normalizedOptions.title
+    ?? normalizedOptions.delegationRequest?.title
+    ?? "Delegated child";
+  if (normalizedOptions.delegationRequest !== undefined) {
+    return manager.create(sessionId, root, { ...normalizedOptions, title });
   }
   const request = delegationRequest({
     agent_type: normalizedOptions.agentName === "build" ? "build" : "explore",
-    title: normalizedOptions.title ?? "Delegated child",
+    title,
   });
   return manager.create(sessionId, root, {
     ...normalizedOptions,
+    title,
     delegationRequest: request,
   });
 }
@@ -819,7 +828,7 @@ async function writeSessionFile(input: {
     agentName: input.agentName ?? (input.parentSessionId === undefined ? "lead" : "explore"),
     activeSkillNames: [],
     modelSelection: { revision: 0 },
-    title: input.title ?? null,
+    title: input.title ?? request?.title ?? null,
     messages: input.messages ?? [],
     pendingMessages: [],
     inputRequestReceipts: [],
@@ -880,7 +889,11 @@ function blockedToolBatch(hitlId: string): SessionToolBatch {
   };
 }
 
-function makeChildLink(parentSessionId: string, childSessionId: string, childAgentName: string): ToolChildSessionLink {
+function makeChildLink(
+  parentSessionId: string,
+  childSessionId: string,
+  childAgentName: ToolChildSessionLink["childAgentName"],
+): ToolChildSessionLink {
   return {
     parentSessionId,
     parentToolCallId: `tool-${childSessionId}`,
@@ -1694,7 +1707,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
+    createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -1741,7 +1754,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
     const rootStore = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
+    createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -1780,12 +1793,12 @@ describe("SessionExecutionManager", () => {
     const siblingId = crypto.randomUUID();
     const siblingRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
     });
-    storeManager.create(siblingId, workspaceRoot, {
+    createTestSession(storeManager, siblingId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -4306,6 +4319,81 @@ describe("SessionExecutionManager", () => {
     }
   });
 
+  test("admits the final direct child, rejects the next without residue, and still permits resume", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    for (let index = 0; index < MAX_DIRECT_CHILD_SESSIONS - 1; index += 1) {
+      parentStore.getState().append({
+        type: "tool-child-session-link",
+        link: {
+          parentSessionId: parentId,
+          parentToolCallId: `historical-tool-${index}`,
+          toolName: "delegate",
+          childSessionId: `historical-child-${index}`,
+          childExecutionId: `historical-execution-${index}`,
+          childAgentName: "explore",
+          childProfile: "fast",
+          childSkillNames: [],
+          title: `Historical child ${index}`,
+          depth: 1,
+          background: true,
+          status: "completed",
+          createdAt: index,
+        },
+      });
+    }
+    const { manager, sessionAgentManager } = createManager({}, { factory: makeFactory() });
+
+    const finalChild = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "final-allowed-child",
+      toolName: "delegate",
+      request: delegationRequest({ title: "Final allowed child" }),
+      parentAbort: undefined,
+    });
+    await finalChild.result;
+    expect(new Set(parentStore.getState().childSessionLinks.map((link) => link.childSessionId)).size)
+      .toBe(MAX_DIRECT_CHILD_SESSIONS);
+
+    const rejectedChildId = crypto.randomUUID();
+    const linksBeforeRejection = parentStore.getState().childSessionLinks;
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "overflow-child",
+      childSessionId: rejectedChildId,
+      toolName: "delegate",
+      request: delegationRequest({ title: "Overflow child" }),
+      parentAbort: undefined,
+    })).rejects.toMatchObject({
+      name: "DelegationExecutionAdmissionError",
+      code: "DELEGATION_SESSION_CAPACITY_REACHED",
+    });
+    expect(parentStore.getState().childSessionLinks).toBe(linksBeforeRejection);
+    expect(storeManager.get(rejectedChildId, workspaceRoot)).toBeUndefined();
+    expect(await Bun.file(getSessionPath(workspaceRoot, rejectedChildId)).exists()).toBe(false);
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-at-capacity",
+      toolName: "resume_session",
+      sessionId: finalChild.sessionId,
+      instruction: "Continue the existing child",
+      background: false,
+      parentAbort: undefined,
+    });
+    await resumed.result;
+    expect(resumed.sessionId).toBe(finalChild.sessionId);
+    expect(new Set(parentStore.getState().childSessionLinks.map((link) => link.childSessionId)).size)
+      .toBe(MAX_DIRECT_CHILD_SESSIONS);
+  });
+
   test("startChildExecution appends link and canonical prompt before model execution", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
@@ -5918,7 +6006,7 @@ describe("SessionExecutionManager", () => {
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     const runEntered = deferred<void>();
     const childAgent = {
-      store: storeManager.create(childId, workspaceRoot, {
+      store: createTestSession(storeManager, childId, workspaceRoot, {
         rootSessionId: rootId,
         parentSessionId: rootId,
         agentName: "explore",
@@ -6622,6 +6710,8 @@ describe("SessionExecutionManager", () => {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
+      title: "Delegated child",
+      delegationRequest: delegationRequest(),
     }, childId);
     const rootLoad = deferred<typeof rootStore>();
     const rootLoadEntered = deferred<void>();
@@ -6761,7 +6851,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
       agentName: "explore",
@@ -6790,27 +6880,71 @@ describe("SessionExecutionManager", () => {
       .toMatchObject({ title: "Canonical title", status: "completed" });
   });
 
-  test("resumeChildExecution rejects a child without a canonical title", async () => {
-    const parentId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
+  test("resume rejects invalid canonical child titles before model, link, Execution, or input mutation", async () => {
+    for (const [suffix, title] of [
+      ["null", null],
+      ["blank", " "],
+      ["code-points", "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1)],
+    ] as const) {
+      storeManager.clearAll();
+      const parentId = crypto.randomUUID();
+      const childId = crypto.randomUUID();
+      const parentStore = storeManager.create(parentId, workspaceRoot, {
+        source: { kind: "direct" },
+        agentName: "lead",
+      });
+      const childStore = storeManager.create(childId, workspaceRoot, {
+        rootSessionId: parentId,
+        parentSessionId: parentId,
+        agentName: "explore",
+        title: title ?? "Valid canonical title",
+        activeSkillNames: [],
+        delegationRequest: delegationRequest({
+          agent_type: "explore",
+          title: "Valid delegated title",
+          skills: [],
+        }),
+      });
+      childStore.setState({ title });
+      const childAgent = new MockAgent(
+        childId,
+        Promise.resolve({ text: "should not run", steps: 1 }),
+        workspaceRoot,
+      );
+      childAgent.store.setState(childStore.getState());
+      const { manager, sessionAgentManager } = createManager(
+        { [childId]: childAgent },
+        { factory: makeFactory() },
+      );
+      const linksBefore = parentStore.getState().childSessionLinks;
+      const executionsBefore = childStore.getState().executions;
+      const messagesBefore = childStore.getState().messages;
+      const pendingMessagesBefore = childStore.getState().pendingMessages;
+      const receiptsBefore = childStore.getState().inputRequestReceipts;
 
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "missing-title-resume",
-      toolName: "resume_session",
-      sessionId: childId,
-      instruction: "resume",
-    background: false,
-    })).rejects.toThrow(`Child Session "${childId}" has no canonical title`);
-    expect(parentStore.getState().childSessionLinks).toEqual([]);
+      await expect(manager.resumeChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: `invalid-title-resume-${suffix}`,
+        toolName: "resume_session",
+        sessionId: childId,
+        instruction: "resume",
+        background: false,
+      })).rejects.toMatchObject({
+        name: "DelegationExecutionAdmissionError",
+        code: "DELEGATION_IDENTITY_REQUIRED",
+        message: `Child Session "${childId}" has an invalid canonical title`,
+      });
+      expect(childAgent.runMock).not.toHaveBeenCalled();
+      expect(childAgent.runBindings).toEqual([]);
+      expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
+      expect(parentStore.getState().childSessionLinks).toBe(linksBefore);
+      expect(parentStore.getState().childSessionLinks).toEqual([]);
+      expect(childStore.getState().executions).toBe(executionsBefore);
+      expect(childStore.getState().messages).toBe(messagesBefore);
+      expect(childStore.getState().pendingMessages).toBe(pendingMessagesBefore);
+      expect(childStore.getState().inputRequestReceipts).toBe(receiptsBefore);
+    }
   });
 
   test("resumeChildExecution rejects Skills that drift from the durable delegation request", async () => {
@@ -7169,7 +7303,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
       agentName: "explore",

@@ -1449,6 +1449,7 @@ describe("createRuntime", () => {
       agentName: "explore",
       rootSessionId,
       parentSessionId: rootSessionId,
+      title: "Descendant",
       delegationRequest: {
         agent_type: "explore",
         profile: "fast",
@@ -2564,6 +2565,7 @@ describe("createRuntime", () => {
       agentName: "explore",
       rootSessionId: root.sessionId,
       parentSessionId: root.sessionId,
+      title: "Child",
       delegationRequest: {
         agent_type: "explore",
         profile: "fast",

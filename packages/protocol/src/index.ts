@@ -17,6 +17,7 @@ export * from "./auth";
 export * from "./update";
 export * from "./attachments";
 export * from "./session-messages";
+export * from "./session-capacity";
 export * from "./runtime-data";
 export * from "./memory";
 export * from "./agent-tree";

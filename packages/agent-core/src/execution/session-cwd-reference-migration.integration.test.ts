@@ -605,6 +605,7 @@ async function persistAtCwd(
     ...identity,
     agentName: delegationRequest === undefined ? "lead" : "explore",
     ...(delegationRequest === undefined ? { source: { kind: "direct" as const } } : {
+      title: delegationRequest.title,
       delegationRequest,
     }),
   });

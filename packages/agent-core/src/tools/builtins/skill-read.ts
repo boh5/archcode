@@ -25,20 +25,20 @@ const SkillReadAiInputSchema = jsonSchema({
   properties: {
     name: {
       type: "string",
-      description: "Exact current-Agent Skill name copied from the System Prompt or skill_list({}). First read an entry with no resource, for example skill_read({\"name\":\"run-goal\"}). Do not guess, use a target-scoped delegation result, or pass /, :first, invalid, new, or PLACEHOLDER as a name.",
+      description: "Exact current-Agent Skill name copied byte-for-byte from the System Prompt or skill_list({}) after that call succeeds. Example sequence: call skill_list({}), copy one returned name value into this field, then call skill_read with only that name field. Do not reuse a target-scoped delegation result or invent a name.",
     },
     resource: {
       type: "string",
       minLength: 1,
-      description: "Optional Skill-root-relative resource path copied exactly from the entry's Resources list after the entry read. For example, skill_read({\"name\":\"run-goal\",\"resource\":\"references/example.md\"}). Never invent /, SKILL.md, :first, invalid, new, or PLACEHOLDER paths; it cannot read an arbitrary filesystem path.",
+      description: "Optional Skill-root-relative resource path copied byte-for-byte from the Resources list returned by a successful entry read. Example sequence: first call with only the copied name; only if that result lists a resource, repeat the same name and copy one listed resource path into this field. It cannot read arbitrary filesystem paths.",
     },
   },
 });
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe(`Exact allowed Skill name matching ${SKILL_NAME_PATTERN}, with no consecutive hyphens; copy it from the System Prompt's available-skill list or skill_list instead of guessing. First read the entry without resource, for example skill_read({"name":"run-goal"}).`),
-    resource: z.string().min(1).optional().describe("Optional Skill-root-relative resource path copied exactly from the entry's Resources list, for example references/review-packet.md. It cannot select a source or read an arbitrary filesystem path; never use /, SKILL.md, :first, invalid, new, or PLACEHOLDER as a guessed path."),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe(`Exact allowed Skill name matching ${SKILL_NAME_PATTERN}, with no consecutive hyphens; first call skill_list({}), then copy one returned current-Agent name into an entry read that omits resource.`),
+    resource: z.string().min(1).optional().describe("Optional Skill-root-relative resource path copied exactly from the Resources list returned by the preceding entry read. Omit it for the first read; it cannot select a source or read an arbitrary filesystem path, and guessed paths are invalid."),
   })
   .strict();
 
@@ -184,9 +184,9 @@ export function createSkillReadTool() {
   return defineTool({
     name: "skill_read",
     description: [
-      "Load one Skill allowed for the current Agent. First read an exact visible entry with no resource: `skill_read({\"name\":\"run-goal\"})` returns its metadata, filesystem root when available, sorted resource descriptors, and entry body. Only after that entry read may you copy one listed path into `skill_read({\"name\":\"run-goal\",\"resource\":\"references/example.md\"})`, which returns exactly one listed UTF-8 text resource; binary assets return a deterministic unsupported-binary error. The available names are already listed in the System Prompt when discovery succeeded; otherwise call `skill_list({})`. Use an exact visible current-Agent name only.",
+      "Load one Skill allowed for the current Agent. Safe example sequence: (1) call `skill_list({})`; (2) copy one exact returned `name`; (3) call `skill_read({\"name\": copiedName})` to receive metadata, filesystem root when available, sorted resource descriptors, and entry body; (4) only when that result lists a resource, repeat the same name and call `skill_read({\"name\": copiedName, \"resource\": copiedResourcePath})`. The identifiers in this notation mean values copied from successful results, not literal strings to submit. A resource read returns exactly one listed UTF-8 text resource; binary assets return a deterministic unsupported-binary error.",
       "",
-      "Read the Skill before the work it governs, then load supporting resources only when needed. Copy resource paths byte-for-byte from the entry's Resources list; they are Skill-root-relative and cannot read arbitrary filesystem paths. Never guess `/`, `SKILL.md`, `:first`, `first`, `new`, `invalid`, or `PLACEHOLDER` as a name or resource. If a resource read fails, omit resource and retry the entry JSON shown above; do not create a read-only Skill or invent a new path. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or filesystem-root override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
+      "Available names are already listed in the System Prompt when current-Agent discovery succeeded; otherwise start with `skill_list({})`. Read the Skill before the work it governs, then load supporting resources only when needed. Copy names and resource paths byte-for-byte from successful current-Agent results; resource paths are Skill-root-relative and cannot read arbitrary filesystem paths. Never guess either field. If a resource read fails, omit resource and re-read the same entry, then copy only a path it actually lists; do not create a read-only Skill or invent a new path. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or filesystem-root override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
     ].join("\n"),
     inputSchema: SkillReadInputSchema,
     aiInputSchema: SkillReadAiInputSchema,

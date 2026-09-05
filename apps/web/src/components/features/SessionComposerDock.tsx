@@ -10,6 +10,7 @@ import { ComposerQueueList } from "./ComposerQueueList";
 
 interface ComposerDisclosureSnapshot {
   collapsedHitlIds: Set<string>;
+  inspectionHitlIds: Set<string>;
 }
 
 const composerDisclosureByRoute = new Map<string, ComposerDisclosureSnapshot>();
@@ -26,7 +27,10 @@ function getComposerDisclosureSnapshot(
   const key = composerDisclosureKey(slug, sessionId);
   const existing = composerDisclosureByRoute.get(key);
   if (existing) return existing;
-  const created = { collapsedHitlIds: new Set<string>() };
+  const created = {
+    collapsedHitlIds: new Set<string>(),
+    inspectionHitlIds: new Set<string>(),
+  };
   composerDisclosureByRoute.set(key, created);
   return created;
 }
@@ -65,12 +69,33 @@ export function SessionComposerDock({
   const executions = useSessionStore(sessionId, (state) => state.executions, slug);
   const currentExecutionId = useSessionStore(sessionId, (state) => state.currentExecutionId, slug);
   const hitlReady = useHitlProjectInitialized(slug);
-  const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
+  const scopedProjectSlugs = useMemo(() => [slug], [slug]);
+  const attentionVisibleHitl = useAttentionVisibleScopedHitl(scopedProjectSlugs);
   const familyHitl = useMemo(
     () => selectSessionFamilyHitl(attentionVisibleHitl, slug, sessionId),
     [attentionVisibleHitl, sessionId, slug],
   );
-  const hasPendingHitl = familyHitl.length > 0;
+  const pendingHitlIds = useMemo(
+    () => new Set(
+      familyHitl
+        .filter((entry) => entry.view.status === "pending")
+        .map((entry) => entry.view.hitlId),
+    ),
+    [familyHitl],
+  );
+  const attentionHitlIds = useMemo(
+    () => new Set(familyHitl.map((entry) => entry.view.hitlId)),
+    [familyHitl],
+  );
+  const inspectionHitlIds = useMemo(
+    () => new Set(
+      familyHitl
+        .filter((entry) => entry.view.requiresInspection === true)
+        .map((entry) => entry.view.hitlId),
+    ),
+    [familyHitl],
+  );
+  const hasPendingHitl = pendingHitlIds.size > 0;
   const currentExecution = currentExecutionId === undefined
     ? executions.at(-1)
     : executions.find((execution) => execution.id === currentExecutionId) ?? executions.at(-1);
@@ -99,19 +124,22 @@ export function SessionComposerDock({
   }, [disclosureSnapshot]);
 
   useEffect(() => {
-    const pendingIds = new Set(familyHitl.map((entry) => entry.view.hitlId));
     const next = new Set(
       [...disclosureSnapshot.collapsedHitlIds]
-        .filter((hitlId) => pendingIds.has(hitlId)),
+        .filter((hitlId) => attentionHitlIds.has(hitlId)),
     );
+    for (const hitlId of inspectionHitlIds) {
+      if (!disclosureSnapshot.inspectionHitlIds.has(hitlId)) next.delete(hitlId);
+    }
     disclosureSnapshot.collapsedHitlIds = next;
+    disclosureSnapshot.inspectionHitlIds = new Set(inspectionHitlIds);
     setCollapsedHitlIds((current) => {
       if (current.size === next.size && [...current].every((id) => next.has(id))) {
         return current;
       }
       return new Set(next);
     });
-  }, [disclosureSnapshot, familyHitl]);
+  }, [attentionHitlIds, disclosureSnapshot, inspectionHitlIds]);
 
   useEffect(() => {
     if (familyHitl.length === 0) {
@@ -166,11 +194,13 @@ export function SessionComposerDock({
                       entry={activeHitl}
                       expanded={!collapsedHitlIds.has(activeHitl.view.hitlId)}
                       onExpandedChange={(expanded) => {
-                        const next = new Set(disclosureSnapshot.collapsedHitlIds);
+                        const next = new Set(collapsedHitlIds);
                         if (expanded) next.delete(activeHitl.view.hitlId);
                         else next.add(activeHitl.view.hitlId);
-                        disclosureSnapshot.collapsedHitlIds = next;
                         setCollapsedHitlIds(new Set(next));
+                        disclosureSnapshot.collapsedHitlIds = new Set(
+                          [...next].filter((hitlId) => attentionHitlIds.has(hitlId)),
+                        );
                       }}
                       requestPosition={activeHitlIndex + 1}
                       requestCount={familyHitl.length}

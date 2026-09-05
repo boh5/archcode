@@ -6,6 +6,7 @@ import {
   type StreamEvent,
 } from "./types";
 import {
+  sessionTodoCapacityViolation,
   validateExecutionTransition,
   validateExecutionFinalOutputSelection,
   type ExecutionLifecycleEvent,
@@ -306,6 +307,11 @@ function normalizeCompressionState(state: CompressionState): CompressionState {
 }
 
 function validateTodos(todos: readonly SessionTodo[]): void {
+  const capacityViolation = sessionTodoCapacityViolation(todos);
+  if (capacityViolation !== undefined) {
+    throw new InvalidTodoStateError(capacityViolation);
+  }
+
   let inProgressCount = 0;
 
   for (const todo of todos) {

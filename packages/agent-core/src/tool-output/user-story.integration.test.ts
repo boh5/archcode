@@ -80,6 +80,7 @@ beforeEach(async () => {
     cwd: workspace,
     rootSessionId,
     parentSessionId: rootSessionId,
+    title: delegationRequest.title,
     delegationRequest,
   });
   await Promise.all([

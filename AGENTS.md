@@ -57,6 +57,22 @@ Validation order: `typecheck` â†’ `test` (enforced by Turborepo task graph).
 
 Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, test-runner retries, or retry-based flaky-test mitigation.
 
+## AI Review Triage
+
+- Treat every AI Reviewer finding as a hypothesis, not as authority. Verify it
+  against the implementation, a concrete reproduction, and the authoritative
+  product/design contracts before changing code.
+- Fix only confirmed defects in repository-owned code. If a finding is a false
+  positive or conflicts with an explicit contract, reply with the evidence and
+  reject it instead of changing correct behavior merely to satisfy the Reviewer.
+- Do not modify installed third-party Skill packages under `.codex/skills/**`
+  in response to content-review findings. Preserve their installed upstream
+  contents and classify such findings as outside this repository's ownership.
+- A review finding does not authorize scope expansion, speculative hardening,
+  or a new compatibility path. Any materially different product decision must
+  return to the user; otherwise use the smallest fix that closes the reproduced
+  defect.
+
 ## UI/UX Pro Max Workflow
 
 Use the `ui-ux-pro-max` Skill for work that changes UI structure, visual
@@ -318,7 +334,15 @@ subset. `ConfiguredAgent` rebuilds the live authorized catalog at every model
 boundary, then exposes Core, fixed runtime State activations, valid
 Execution-local loaded refs, and `tool_search` only while deferred candidates
 exist. It also rebuilds Current Context from complete Session Todos plus latest
-direct-child facts as deterministic JSON. Ordinary and explicit Skill packages
+direct-child facts as deterministic JSON. Completeness is enforced at writes,
+not by Prompt truncation: one Session holds at most 32 Todos and 24 KiB of
+serialized Todo JSON, while one parent owns at most 64 unique direct children.
+Direct-child IDs are Runtime-generated, Agent names use the four delegated
+identities, child Profiles and statuses use fixed enums, and titles are
+non-blank and at most 80 Unicode code points. These existing write domains give
+the projection a deterministic finite bound without extra per-field limits or
+a second aggregate admission state.
+Ordinary and explicit Skill packages
 remain immutable for the logical Execution, while only the root Lead lifecycle
 slot is reselected at each boundary (`orchestrate-work` without an active Goal,
 `run-goal` with one). Local long-tail and all ready MCP descriptors remain deferred until a
@@ -433,7 +457,7 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) â
 - Lead targets Analyst/Build/Explore/Librarian; Analyst targets Explore/Librarian; Build targets Explore.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
 - `agents/factory.ts` owns one immutable current-Agent/depth delegation capability snapshot and only removes the explicitly configured delegation package at each definition's `childPolicy.maxDepth` or when no direct target exists; it never injects delegation tools. `extraTools` cannot restore that removed package. Prompt/Tool projection and SessionExecutionManager admission consume that same target/Profile/builtin-Skill authority; Provider-facing Tool schemas remain portable presentation contracts while strict internal schemas still validate execution input.
-- `list_agents` and the Web Agent Tree use one backend projection of durable family topology plus live Execution/Link facts. `send_message` targets only a running direct child and uses `steer | queue`; `cancel_session` accepts any descendant and strongly cascades its subtree, while `wait_for_reminder` and `resume_session` remain direct-child operations. `delegate` persists Agent, Profile, Skills, title, objective, and background choice; `resume_session` preserves that identity. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
+- `list_agents` and the Web Agent Tree use one backend projection of durable family topology plus live Execution/Link facts. `send_message` targets only a running direct child and uses `steer | queue`; `cancel_session` accepts any descendant and strongly cascades its subtree, while `wait_for_reminder` and `resume_session` remain direct-child operations. `delegate` persists Agent, Profile, Skills, title, objective, and background choice; `resume_session` preserves that identity. A parent may own at most 64 unique direct children, while resuming an existing child consumes no new identity slot. Delegated titles are non-blank and at most 80 Unicode code points; direct-child Current Context accepts only delegated `analyst | build | explore | librarian`, `deep | fast`, and fixed link statuses. Session/Execution IDs remain Runtime-generated, and objective/Skills retain their existing Delegation contract rather than acquiring unrelated capacity rules. Execution admission and every model boundary fail closed on malformed projected state. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
 
 **Workflow Skills:**
 - At every model boundary, an ordinary root Lead activates `orchestrate-work` and a root Lead with an active Goal activates `run-goal`; this reserved lifecycle slot is separate from immutable ordinary/explicit Execution Skill snapshots. Root Discussion activates `shape-todo` from its formal Session identity.
@@ -441,7 +465,7 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) â
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 - A Skill is one package: required `SKILL.md`; optional `scripts/`, `references/`, `assets/`, and other contained resources. Its strict YAML frontmatter accepts `name`, `description`, optional `license`, `compatibility`, and `metadata`; `description` states both method and activation timing.
 - Skill precedence is whole-package and strict: project `.archcode/skills/<name>/` > project `.agents/skills/<name>/` > user `~/.archcode/skills/<name>/` > user `~/.agents/skills/<name>/` > embedded builtin. Bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
-- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; the first page is `skill_list({})` or `skill_list({ agent_type })`, and continuation copies only the preceding successful page's digest-bound `nextCursor`. `skill_list({ agent_type })` may inspect one currently allowed direct child's catalog for exact `delegate.skills` names, but that target page grants no parent `skill_read` authority. Entry activation starts with `skill_read({ name })`, which returns one current-Agent entry plus sorted resource descriptors; `skill_read({ name, resource })` may then read exactly one listed UTF-8 relative resource path. Guessed root, entry, resource, and cursor sentinels are invalid and errors return scope-preserving retry examples. Binary assets are valid package resources but are not returned by the text-only tool.
+- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; the first page is `skill_list({})` or `skill_list({ agent_type })`, and continuation copies only the preceding successful page's digest-bound `nextCursor`. `skill_list({ agent_type })` may inspect one currently allowed direct child's catalog for exact `delegate.skills` names, but that target page grants no parent `skill_read` authority. Entry activation first copies an exact current-Agent name from the System Prompt or a successful `skill_list({})` result into `skill_read({ name })`; descriptions never assume one fixed Skill is valid in every runtime. That entry returns sorted resource descriptors, after which `skill_read({ name, resource })` may copy and read exactly one listed UTF-8 relative resource path. Guessed root, entry, resource, and cursor values are invalid and errors return scope-preserving retry instructions. Binary assets are valid package resources but are not returned by the text-only tool.
 - Invalid package candidates are surfaced as `SKILL_INVALID_PACKAGE` diagnostics. A winning invalid package fails closed; resolution never falls through to a lower-precedence package. The same winning package is claimed once for one explicit `/skill use` logical Execution; an in-process resume reuses that snapshot, while process-restart recovery revalidates its persisted source/digest and fails closed on change.
 - Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
 
@@ -529,14 +553,17 @@ Todo lifecycle does not encode live Session activity. The Web navigator derives
 a separate Running group only from eligible Todo-linked root family activity
 `running | resuming | stopping`; Needs-you wins, Direct Sessions and
 rejected/archived Todos are excluded, and the target is the newest
-`session.updatedAt` with `sessionId` as the stable tie break. Todo labels are
-presentation-only: ignore fenced code, prefer a concrete H1, then the first
-concrete line after the finite builtin-template/standalone HTTP(S) skip set,
-with `Untitled Todo` as the only fallback. No title field is persisted.
+`session.updatedAt` with `sessionId` as the stable tie break. Running rows expose
+`Working` to assistive technology instead of reusing a historical terminal
+Session state. Todo labels are presentation-only: ignore fenced code, prefer a
+concrete H1, then the first concrete line after the finite builtin-template or
+standalone HTTP(S) skip set. Legal ATX closing hashes require preceding
+whitespace, so a heading like `C#` keeps its content. `Untitled Todo` is the
+only fallback. No title field is persisted.
 
 ## HITL
 
-HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for exact approval/question destinations and Todo navigator attention views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging. In the Session UI, the latest HITL-paused Work and the pending Question/Permission card are independent disclosures: paused Work defaults open unless the user already chose for that Segment, while each request defaults open and preserves a route-lifetime manual choice by `hitlId`. Composer input remains mounted; request removal clears obsolete disclosure state, and layout changes keep only an existing follow-latest transcript pinned rather than moving a historical reading position.
+HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for exact approval/question destinations and Todo navigator attention views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging. In the Session UI, the latest HITL-paused Work and the pending Question/Permission card are independent disclosures: paused Work defaults open unless the user already chose for that Segment, while each pending request defaults open and preserves a route-lifetime manual choice by `hitlId`. An answered request whose response could not be delivered remains visible as an expanded `Inspection Â· Manual inspection` card, but it is not pending: it does not retain collapsed state, advertise `Needs you`, or block ordinary Composer input and pickers. Composer input remains mounted; request removal clears obsolete disclosure state, and layout changes keep only an existing follow-latest transcript pinned rather than moving a historical reading position.
 
 ## Automation System
 

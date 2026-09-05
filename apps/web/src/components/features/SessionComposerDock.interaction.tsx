@@ -682,7 +682,7 @@ describe("SessionComposerDock", () => {
     ).not.toBeNull();
   });
 
-  test("shows one active request at a time and navigates the pending request queue", async () => {
+  test("navigates pending requests and reopens a collapsed answer that needs inspection", async () => {
     const store = createWebSessionStore("session-3", "project-1");
     applySnapshot(store, {
       rootSessionId: "session-3",
@@ -845,59 +845,62 @@ describe("SessionComposerDock", () => {
     await act(async () => secondToggle.click());
     expect(secondToggle.getAttribute("aria-expanded")).toBe("false");
 
+    const inspection: HitlView = {
+      ...second,
+      status: "answered",
+      allowedActions: [],
+      requiresInspection: true,
+      updatedAt: "2026-07-16T00:01:00.000Z",
+      resolvedAt: "2026-07-16T00:01:00.000Z",
+    };
     await act(async () => {
       hitlStore.getState().applySnapshot({
         type: "hitl.snapshot",
         projectSlugs: ["project-1"],
         entries: [{
           projectSlug: "project-1",
-          hitlId: first.hitlId,
+          hitlId: inspection.hitlId,
           ownerSessionId: "session-3",
           rootSessionId: "session-3",
-          ownerAgentName: "lead",
+          ownerAgentName: "build",
           ownerSessionTitle: "Session 3",
-          view: first,
+          view: inspection,
         }],
         createdAt: 2,
       });
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("First request");
+    const inspectionToggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="hitl-card-toggle"]',
+    );
+    expect(inspectionToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(inspectionToggle?.textContent).toContain("Inspection");
+    expect(inspectionToggle?.textContent).toContain("Manual inspection");
+    expect(inspectionToggle?.textContent).not.toContain("Pending");
+    expect(container.querySelector<HTMLElement>('[data-testid="hitl-decision-body"]')?.hidden).toBe(false);
+    expect(container.textContent).toContain("This request can no longer accept actions.");
+    expect(container.querySelector('[data-testid="session-composer-dock"]')?.className).toContain("max-h-[min(52dvh,460px)]");
+    expect(container.querySelector('[data-testid="composer-terminal-action"]')?.getAttribute("aria-label")).toBe("Send message");
+    expect(container.querySelector('[data-testid="composer-card"]')?.textContent).toContain("Ready");
 
     await act(async () => {
-      hitlStore.getState().applySnapshot({
-        type: "hitl.snapshot",
-        projectSlugs: ["project-1"],
-        entries: [
-          {
-            projectSlug: "project-1",
-            hitlId: first.hitlId,
-            ownerSessionId: "session-3",
-            rootSessionId: "session-3",
-            ownerAgentName: "lead",
-            ownerSessionTitle: "Session 3",
-            view: first,
-          },
-          {
-            projectSlug: "project-1",
-            hitlId: second.hitlId,
-            ownerSessionId: "session-3",
-            rootSessionId: "session-3",
-            ownerAgentName: "build",
-            ownerSessionTitle: "Session 3",
-            view: second,
-          },
-        ],
-        createdAt: 3,
-      });
+      inspectionToggle?.click();
       await Promise.resolve();
     });
-    const nextAfterReappearing = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Next request"]',
-    );
-    if (!nextAfterReappearing) throw new Error("Missing next request after refresh");
-    await act(async () => nextAfterReappearing.click());
     expect(container.querySelector('[data-testid="hitl-card-toggle"]')
-      ?.getAttribute("aria-expanded")).toBe("true");
+      ?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <SessionComposerDock key="inspection-remount" slug="project-1" sessionId="session-3" />
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="hitl-card-toggle"]')
+      ?.getAttribute("aria-expanded")).toBe("false");
   });
 });
