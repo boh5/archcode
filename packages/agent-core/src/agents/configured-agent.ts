@@ -3,6 +3,7 @@ import { lstat } from "node:fs/promises";
 import {
   directChildContextCapacityViolation,
   projectLatestDirectChildContext,
+  selectLatestDirectChildLinks,
   PROJECT_STATE_DIR_NAME,
   TOOL_BACKGROUND_OUTPUT,
   TOOL_CANCEL_SESSION,
@@ -998,7 +999,7 @@ export class ConfiguredAgent implements Agent {
 
   private async collectToolVisibilityFacts(executionId: string): Promise<ToolVisibilityFacts> {
     const state = this.store.getState();
-    const directLinks = latestDirectChildLinks(state.childSessionLinks);
+    const directLinks = selectLatestDirectChildLinks(state.childSessionLinks);
     const nonterminalDirectStatuses = new Set(["linked", "running", "waiting_for_human", "cancelling"]);
     const resumableDirectStatuses = new Set(["completed", "failed", "timed_out", "cancelled", "interrupted"]);
     const hasNonterminalDirectChild = directLinks.some((link) => nonterminalDirectStatuses.has(link.status));
@@ -1151,21 +1152,6 @@ async function isRegularFile(path: string): Promise<boolean> {
     if (typeof error === "object" && error !== null && Reflect.get(error, "code") === "ENOENT") return false;
     throw error;
   }
-}
-
-function latestDirectChildLinks(links: readonly ToolChildSessionLink[]): ToolChildSessionLink[] {
-  const latest = new Map<string, ToolChildSessionLink>();
-  for (const link of links) {
-    const current = latest.get(link.childSessionId);
-    if (
-      current === undefined
-      || link.createdAt > current.createdAt
-      || (link.createdAt === current.createdAt && link.parentToolCallId.localeCompare(current.parentToolCallId) > 0)
-    ) {
-      latest.set(link.childSessionId, link);
-    }
-  }
-  return [...latest.values()].sort((a, b) => a.childSessionId.localeCompare(b.childSessionId));
 }
 
 function findAgentTreeNode(root: AgentTreeNode, sessionId: string): AgentTreeNode | undefined {

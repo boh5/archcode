@@ -88,13 +88,10 @@ export function directChildContextCapacityViolation(
   return undefined;
 }
 
-/**
- * Project the latest durable link for every unique direct child into the exact
- * six fields exposed in Current Context.
- */
-export function projectLatestDirectChildContext(
+/** Select the latest durable link for every unique direct child. */
+export function selectLatestDirectChildLinks(
   links: readonly ToolChildSessionLink[],
-): DirectChildContextCapacityCandidate[] {
+): ToolChildSessionLink[] {
   const latest = new Map<string, ToolChildSessionLink>();
   for (const link of links) {
     const current = latest.get(link.childSessionId);
@@ -111,13 +108,22 @@ export function projectLatestDirectChildContext(
   }
 
   return [...latest.values()]
-    .sort((left, right) => left.childSessionId.localeCompare(right.childSessionId))
-    .map((link) => ({
-      sessionId: link.childSessionId,
-      agentName: link.childAgentName,
-      profile: link.childProfile,
-      title: link.title,
-      executionId: link.childExecutionId,
-      status: link.status,
-    }));
+    .sort((left, right) => left.childSessionId.localeCompare(right.childSessionId));
+}
+
+/**
+ * Project the latest durable link for every unique direct child into the exact
+ * six fields exposed in Current Context.
+ */
+export function projectLatestDirectChildContext(
+  links: readonly ToolChildSessionLink[],
+): DirectChildContextCapacityCandidate[] {
+  return selectLatestDirectChildLinks(links).map((link) => ({
+    sessionId: link.childSessionId,
+    agentName: link.childAgentName,
+    profile: link.childProfile,
+    title: link.title,
+    executionId: link.childExecutionId,
+    status: link.status,
+  }));
 }

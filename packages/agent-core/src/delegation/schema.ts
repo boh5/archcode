@@ -14,12 +14,14 @@ const DELEGATION_AGENT_TYPE = z.enum(DELEGATED_AGENT_NAMES).describe(
 const DELEGATION_PROFILE = z.enum(DIRECT_CHILD_AGENT_PROFILES).describe(
   "Delegated model-resource Profile value. Current parent/depth capability admission determines whether the selected Agent/Profile pair is authorized.",
 );
-export const DelegatedSessionTitleSchema = z.string().superRefine((value, ctx) => {
+export const DelegatedSessionTitleSchema = z.string().min(1).superRefine((value, ctx) => {
   const violation = delegatedSessionTitleCapacityViolation(value);
   if (violation !== undefined) ctx.addIssue({ code: "custom", message: violation });
 }).describe(
   `Short user-facing title for the child Session, at most ${MAX_DELEGATED_SESSION_TITLE_LENGTH} Unicode code points.`,
-);
+).meta({
+  maxLength: MAX_DELEGATED_SESSION_TITLE_LENGTH,
+});
 const DELEGATION_OBJECTIVE = NON_EMPTY.describe(
   "Self-contained task-specific handoff for the fresh child, stating what it must accomplish or answer and what it must return.",
 );

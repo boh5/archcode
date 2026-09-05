@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asSchema } from "ai";
 import { z } from "zod/v4";
 import {
   MAX_DELEGATED_SESSION_TITLE_LENGTH,
@@ -29,7 +30,7 @@ function jsonSchema(value: unknown): Record<string, unknown> {
 }
 
 describe("projectModelToolDescriptors", () => {
-  test("projects portable schemas through the actual ResolvedToolSet boundary", () => {
+  test("projects portable schemas through the actual ResolvedToolSet boundary", async () => {
     const snapshot = capabilities([
       Object.freeze({
         agentName: "analyst",
@@ -57,6 +58,7 @@ describe("projectModelToolDescriptors", () => {
 
     const projected = projectModelToolDescriptors(originals, snapshot);
     const aiTools = new ResolvedToolSet(projected).toAITools();
+    const delegateProviderSchema = await asSchema(aiTools.delegate!.inputSchema).jsonSchema;
     const schemas = Object.fromEntries(Object.entries(aiTools).map(([name, tool]) => [
       name,
       jsonSchema(tool.inputSchema),
@@ -69,9 +71,23 @@ describe("projectModelToolDescriptors", () => {
       properties: {
         agent_type: { enum: ["analyst", "build", "explore"] },
         profile: { enum: ["deep", "fast"] },
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: MAX_DELEGATED_SESSION_TITLE_LENGTH,
+        },
         skills: { type: "array", items: { type: "string" } },
       },
       additionalProperties: false,
+    });
+    expect(delegateProviderSchema).toMatchObject({
+      properties: {
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: MAX_DELEGATED_SESSION_TITLE_LENGTH,
+        },
+      },
     });
     expect(schemas.skill_list).toMatchObject({
       properties: {
@@ -148,9 +164,12 @@ describe("projectModelToolDescriptors", () => {
     });
 
     for (const [title, accepted] of [
+      ["", false],
       [" ", false],
       ["t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH), true],
       ["t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1), false],
+      ["😀".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH), true],
+      ["😀".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1), false],
     ] as const) {
       expect(aiSchema.safeParse(request(title)).success).toBe(accepted);
       expect(DelegationRequestSchema.safeParse(request(title)).success).toBe(accepted);

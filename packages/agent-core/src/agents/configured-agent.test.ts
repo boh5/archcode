@@ -891,6 +891,9 @@ describe("ConfiguredAgent", () => {
       { sessionId: "child-a", agentName: "explore", profile: "fast", title: "A child", executionId: "child-a-execution", status: "completed" },
       { sessionId: "child-z", agentName: "explore", profile: "fast", title: "Z child", executionId: "child-z-execution", status: "running" },
     ])}`);
+    expect(store.getState().promptTraces.at(-1)?.visibleTools).toEqual(
+      expect.arrayContaining(["wait_for_reminder", "cancel_session"]),
+    );
   });
 
   test.each([
