@@ -97,6 +97,13 @@
 - Browser follow-up verified the actual Session prototype render at 1280×720 in dark and light themes, identical navigator contents across Session → Todos, and Enter-key navigation from Running back to the Session detail URL, with no browser-console error. The in-app browser's attempted narrow viewport override did not change its actual viewport, so this follow-up does not claim a new narrow-screen pass; the earlier real Chrome 390×844 product/prototype evidence remains applicable because no responsive CSS or product UI changed.
 - Fresh forced verification on this follow-up passed 4,734 tests, 0 failures, 8/8 tasks with 0 cache hits (39.752 seconds), plus 5/5 forced typechecks, production build, and `git diff --check`. Logs: `/private/tmp/archcode-pr27-followup-typecheck.log`, `/private/tmp/archcode-pr27-followup-test.log`, and `/private/tmp/archcode-pr27-followup-build.log`.
 
+### Phase 7 — Session prototype current-row correction
+
+- Codex's final-head finding was confirmed against the production navigation projection and its existing test: a concrete Running target Session selects the Running row, not its Todo lifecycle copy. The prototype's existing `setSurface()` now owns that selection and `aria-current`; the sample-only writer in shared `app.js` was removed. No product implementation or new navigation subsystem was added.
+- Browser QA also reproduced Stage changes incorrectly moving the first same-title row, which is now Running. The existing lifecycle mutation selector is restricted to the In progress/Ready sections, preserving Running independently across repeated stage changes.
+- Actual browser checks pass for one selected Running row on first load/reload, one lifecycle row on Todo/Work, Enter-key return to Session detail, and repeated In progress → Ready changes preserving Running count 1. No browser-console error occurred. The prototype script query was updated to invalidate stale browser assets.
+- The complete Web test lane passed again (713 unit + 170 interaction, 0 failures); `git diff --check` passed. The Phase 6 full 4,734-test/typecheck/build evidence still covers the unchanged production source.
+
 ## Acceptance Evidence
 
 | AC | Status | Evidence |

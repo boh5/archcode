@@ -3424,7 +3424,11 @@
 
     const displayLead = todoLead?.textContent.trim();
     const navRows = [...document.querySelectorAll('.todo-nav .nav-row')];
-    const row = navRows.find((item) => item.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead);
+    const row = navRows.find((item) => {
+      const group = item.closest('.nav-section')?.querySelector('.nav-section-title span')?.textContent.trim();
+      return (group === 'In progress' || group === 'Ready')
+        && item.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead;
+    });
     navRows.forEach((item) => item.classList.remove('active'));
     if (!row) return;
     const sourceSection = row.closest('.nav-section');
@@ -3617,7 +3621,6 @@
     syncSourceFixtureVisuals(sampleName);
     if (todoShellHeader) todoShellHeader.hidden = !sample.todo;
     applyTodoFixture(sample);
-    sessionSampleLinks.forEach((link) => link.classList.toggle('active', link.dataset.sessionSample === sampleName));
     const todoRouteParams = new URLSearchParams(location.search);
     const requestedLifecycle = todoRouteParams.get('lane');
     const requestedTodoState = todoRouteParams.get('state');
