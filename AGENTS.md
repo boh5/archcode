@@ -2,6 +2,15 @@
 
 ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready or In Progress work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with six Agent identities (Lead, Discussion, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
+## Working Scope and Completion
+
+- Follow the user's requested scope. For consultation, read-only audits, or documentation work, inspect only the material needed for that task; do not turn it into a business-code review or implementation task.
+- Read relevant instructions and references on demand. Do not load every directory, design document, or Skill before a small change.
+- Continue authorized investigation, implementation, fixes, and verification through a concrete result. Resolve routine choices from the request and available evidence; do not ask the user to reconfirm work they already authorized.
+- Ask when a material product decision, missing essential information, new authority, or scope change prevents progress. Honor explicit instructions to present a plan and wait before editing.
+- Apply UI, testing, PR, merge, and release workflows only to the corresponding work. Report what changed, the validation performed, and any remaining limitation; do not claim completion without the required evidence.
+- The Agent identities, tools, Skills, and lifecycle rules below describe ArchCode's product runtime. They do not redefine the capabilities or authorization of the coding assistant working on this repository.
+
 ## Monorepo Structure
 
 Turborepo workspace with Bun. Five workspaces:
@@ -57,6 +66,15 @@ Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
 Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, test-runner retries, or retry-based flaky-test mitigation.
 
+## Installed Third-Party Skills
+
+- `.codex/skills/**` contains installed upstream packages. Do not rewrite their instructions, descriptions, scripts, examples, or references for this project, including to satisfy a review finding.
+- When an update is requested, verify the upstream source and revision, stage the complete official package or official installer output, compare it with the installed package, and synchronize only confirmed upstream changes. Preserve upstream contents without local patches; verify the resulting files against the staged package.
+- Report upstream defects or conflicts as upstream issues. Put necessary project-specific usage constraints in this file, not inside third-party packages.
+- Keep packages under the existing `.codex/skills/` root. Resolve example script/resource paths from the actual installed package directory; upstream examples may use `.agents/skills/` or `.claude/skills/`. Do not create duplicate installations just to match an example path.
+- Marketing packages come from `coreyhaines31/marketingskills`, under `skills/` (last synchronized commit: `5b2c0007766c6a1cf1d53fd8fc73e979e0821022`).
+- `banner-design`, `brand`, `design`, `design-system`, `slides`, `ui-styling`, and `ui-ux-pro-max` come from `nextlevelbuilder/ui-ux-pro-max-skill`. Use its official CLI Codex generator (last synchronized source commit: `f3ac195224eac1eb0dfe1a3059c2a6add78ffbe3`).
+
 ## AI Review Triage
 
 - Treat every AI Reviewer finding as a hypothesis, not as authority. Verify it
@@ -65,9 +83,6 @@ Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns
 - Fix only confirmed defects in repository-owned code. If a finding is a false
   positive or conflicts with an explicit contract, reply with the evidence and
   reject it instead of changing correct behavior merely to satisfy the Reviewer.
-- Do not modify installed third-party Skill packages under `.codex/skills/**`
-  in response to content-review findings. Preserve their installed upstream
-  contents and classify such findings as outside this repository's ownership.
 - A review finding does not authorize scope expansion, speculative hardening,
   or a new compatibility path. Any materially different product decision must
   return to the user; otherwise use the smallest fix that closes the reproduced
@@ -93,7 +108,7 @@ render is the visual delivery and visual acceptance authority. Source code,
 tokens, DOM inspection, screenshots inferred from CSS, or prose specifications
 cannot substitute for looking at the rendered prototype and rendered product.
 
-Follow this order for every UI task:
+For UI work within the authorized scope:
 
 1. Read `design-system/MASTER.md`. It is the single global design baseline.
 2. Read `design-system/pages/<page>.md` when it exists. Page files contain only
@@ -160,110 +175,9 @@ Files under `docs/` are historical work records, not active design-system
 artifacts. Preserve their original content and paths; an older prototype or
 design reference there does not compete with the current prototype above.
 
-## Architecture
+## Runtime Architecture Contracts
 
-```
-apps/server/src/
-├── main.ts                     # Boot entry: create Config service → ServerHost → listener
-├── index.ts                     # Barrel: re-exports app, boot, error-handler, errors, listen, logger
-├── app.ts                       # Runtime-backed route composition only
-├── server-host.ts               # Single HTTP shell, bootstrap modes, Runtime lifecycle
-├── server-auth-service.ts       # Password verification, bounded sessions, SSE revocation
-├── setup-grant.ts               # Process-local one-time first-run capability
-├── auth-http.ts                 # Cookie and same-origin HTTP adapters
-├── boot.ts                      # Listener bootstrap + graceful shutdown on SIGINT/SIGTERM
-├── ask-user-service.ts         # Deferred question request/response pattern
-├── permission-service.ts       # Deferred permission request/response pattern
-├── error-handler.ts            # Hono error handler
-├── error.ts                    # Server-specific error classes
-├── lifecycle.ts                # Server lifecycle events
-├── listen.ts                   # Port binding (falls back to ephemeral if busy)
-├── logger.ts                   # Request logger
-├── resolve.ts                  # Request path resolution
-├── validation.ts               # Hono validator + Zod → BadRequestError thin adapter
-├── serve-web.ts                # Embedded web asset serving through an explicit asset-map input
-├── routes/                     # Route modules: setup, auth, global-work, directories, files,
-│                               #   automations, global-events, hitl, mcp, messages,
-│                               #   permissions, projects, questions, sessions, todos
-└── events/                     # global-event-bus.ts
-
-packages/agent-core/src/
-├── runtime.ts                  # createRuntime(): config → providers → tools → MCP → session manager
-├── index.ts                    # Public API exports
-├── config/                     # Global config service, Zod schema (.strict()), MCP/GitHub env resolution
-├── provider/                   # Provider instance creation and immutable model metadata
-├── models/                     # ModelRuntime snapshots, selection resolution, and Execution-owned bindings
-├── agents/definitions/         # AgentDefinition records for lead, analyst, build, explore, librarian
-├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
-├── agents/configured-agent.ts  # Filtered tool set + own store per delegated agent
-├── agents/session-agent-manager.ts  # Rebuildable per-Session Agent cache
-├── agents/constants.ts         # AgentType/depth defaults + Skill/delegation capability packages only
-├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
-├── agents/tool-filter.ts       # Definition-based tool filtering and delegation-depth enforcement
-├── agents/tool-filter.test.ts  # Architecture coverage for definition-based capability filtering
-├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
-├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
-├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation
-├── execution/session-execution-manager.ts # Sole logical Execution lifecycle/admission, run resources, abort, recovery, and terminal owner
-├── process/                    # ProcessRunner lifecycle, bounded streaming, timeout/abort, and structured results
-├── tools/define-tool.ts        # defineTool() → ToolDescriptor (strict RawToolResult + explicit outputPolicy)
-├── tools/registry.ts           # admission/blocked handling and exactly-once Raw → Finalized finalization
-├── tools/builtins/             # Base, delegation/resume, memory, Session Goal, and worktree tools
-├── tools/github.ts             # Generic GitHub connector descriptors; not default agent tools
-├── tools/hooks/                # File/workspace guards and raw-result hooks such as edit recovery
-├── tools/permission/           # Tool access policy; Bash owns finite analysis -> deny/ask/default allow
-├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches
-├── tools/security/             # Secret detection plus finite Bash syntax/path analysis facts
-├── tool-output/                # Finalizer, streaming redaction/capture, bounded artifacts, read/search authorization
-├── tools/riipgrep/             # Ripgrep wrapper for search tools
-├── core/                       # register-tools.ts: wires tools and finalized-result audit/logger hooks
-├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
-├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + title-generation task
-├── commands/                   # CommandRegistry + /compact command
-├── compression/                # DCP-like dynamic range compression: model tool action, refs, block state, soft/strong nudges below hard threshold
-├── compact/                    # Mandatory hard compact safety path at >=85% context pressure plus /compact command
-├── memory/                     # MemoryService, Markdown adapter, idle learning coordinator, policy, schemas, limits
-├── session-goal/               # Session.goal schema, ownership service, status, budget, and usage
-├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
-├── automations/                # Canonical Automation schemas, schedule, durable Invocation, Session dispatch
-├── todos/                      # ProjectTodo schema, serialized state, and narrow Session-entry coordination
-├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
-├── skills/                     # Standard local Skill packages: schema, package reader, source resolver, embedded builtin manifest
-├── llm/                        # Managed LLM runtime: runLlmStream/runLlmText/runLlmObject, retry/recovery, adapter test seam
-├── projects/                   # ProjectRegistry + per-workspace HITL/memory/approval context resolver
-├── prompt/                     # PromptContractCompiler V2: typed kernel/runtime/role/collaboration/context/overlay layers + trace/eval
-├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
-├── delegation/                 # Strict child Agent/Profile/Skill delegation contract
-├── security/                   # 3 secret-detection regex patterns + containsSecretPattern()
-└── utils/                      # Error utilities, frontmatter parse/format, safe-file operations
-
-apps/web/src/
-├── main.tsx                    # React entry point
-├── App.tsx                     # Root component
-├── router.tsx                  # React Router routes
-├── api/                        # API client layer
-├── components/                 # UI components
-├── context/                    # React context providers
-├── hooks/                      # Custom hooks
-├── lib/                        # Utility library (includes SSE client)
-├── routes/                     # Page route components
-├── store/                      # Client-side Zustand stores
-└── styles/                     # CSS/styles
-
-packages/protocol/src/
-├── index.ts                    # Barrel export
-├── types.ts                    # SSE, session, todo, reminder, HITL, Automation types
-├── automation.ts               # Cross-layer Automation limits
-├── compression.ts              # Structured compression summary snapshot + renderer
-├── guards.ts                   # Cross-layer StreamEvent/terminal-child guards
-└── reduce.ts                   # Stream event reduction logic
-
-packages/utils/src/
-├── index.ts                    # Barrel export
-├── format-time.ts              # Shared duration/time formatting helper
-├── sort-json-value.ts          # Runtime-free stable JSON key ordering
-└── *.test.ts                   # bun:test coverage for utility helpers
-```
+Read only the modules relevant to the task: `apps/server/` owns HTTP/bootstrap; `packages/agent-core/` owns runtime services; `apps/web/` owns the client; `packages/protocol/` and `packages/utils/` remain runtime-dependency-free. Detailed file inventories, dependency versions, and configuration examples should be looked up when needed rather than duplicated here.
 
 **Data flow:**
 ```
@@ -274,7 +188,9 @@ packages/utils/src/
   → Core + State + Execution-loaded visibility → query loop → store → SSE → Web UI
 ```
 
-Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `send_message`, `background_output`, `wait_for_reminder`, `cancel_session`, and `resume_session`. `delegate(DelegationRequest)` creates a durable direct child; `list_agents` reads the caller's descendant subtree through the same backend Agent Tree projection used by the Web tree; and `send_message` is the only parent-to-child message path, with `delivery: "steer" | "queue"` selecting the current Execution's next model boundary or the next Execution. `background_output` reads a direct child's result, `wait_for_reminder` waits on direct children, `cancel_session` strongly cascades to any descendant subtree, and `resume_session` continues a stopped direct child while preserving its Agent, Profile, Skills, and responsibility. A delegated child may publish `completed` only when its current Execution has a non-blank canonical `final_answer` that is not a whole-response Tool-control document; the centralized child-final gate runs before `execution-end`, and its stable missing/protocol-only failure is reused by the Execution, child link, parent Tool result, background output, and reminder. Synchronous delegation returns the accepted final response directly, while background work is read through `background_output`. If a synchronous child suspends, its parent suspends on the original tool call; each resumes its own same logical Execution when ready. `SessionExecutionManager` is the sole owner of Execution lifecycle, admission, concurrency, live run resources, recovery, terminal validation, and terminal records. There is no Build owned-scope or lease subsystem.
+`SessionExecutionManager` is the sole owner of logical Execution lifecycle, admission, concurrency, live run resources, abort, recovery, terminal validation, and terminal records. Store loading does not repair lifecycle state. There is no Build owned-scope or lease subsystem.
+
+A delegated child may publish `completed` only with a non-blank canonical `final_answer` that is not a whole-response Tool-control document. The centralized gate runs before `execution-end`; its stable failure is shared by Execution, child link, parent Tool result, background output, and reminder. Synchronous delegation returns the accepted final response; background work is read through `background_output`. When a synchronous child suspends, the parent suspends on the original tool call; each later resumes its own same logical Execution.
 
 **Server + Web UI:**
 - `apps/server/src/main.ts` creates `ServerConfigService`, classifies Config state, and creates `ArchCodeServerHost`. Missing Config enters token-protected Setup without constructing an `AgentRuntime`.
@@ -282,10 +198,7 @@ Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `se
 - `apps/server/src/boot.ts` starts the Host on `ARCHCODE_PORT` (default `4096`) and wires graceful shutdown. Development mode is derived from the source/compiled runtime, never from authentication state.
 - `apps/web/` is the React frontend. In development it runs through Vite (`bun run --cwd apps/web dev`); production uses `bun run build` and runs `dist/archcode` so Hono can serve API + UI from one port.
 
-**Build pipeline** (`scripts/build.ts`):
-1. `runWebBuild()` → Vite builds `apps/web/` to `apps/web/dist/`
-2. `writeProductionEntrypoint()` → generates ignored `dist/.build/main.ts` with static file-loader imports for every Web asset
-3. `compileBinary()` → `Bun.build()` compiles that temporary entrypoint, the Server, and the embedded Web assets into `dist/archcode` (minified, includes the css-tree patch plugin); the temporary entrypoint is removed in `finally`
+**Production build:** `scripts/build.ts` builds the Web assets, generates ignored `dist/.build/main.ts` with static asset imports, and compiles the Server and assets into `dist/archcode` with the css-tree patch plugin. The temporary entrypoint is removed in `finally`.
 
 **Multi-project model:**
 - `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
@@ -293,23 +206,7 @@ Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `se
 - Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo-originated root stores its immutable `{ todoId, entry }` source on the Session itself: `discussion` requires a root `discussion` Agent, while `work` and `automation` require a root `lead`.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, automations, HITL, and events.
 
-**Project `.archcode` layout** (per registered workspace root; user-global `~/.archcode` is unchanged):
-```text
-.archcode/
-├── runtime/                         # system-managed authority state
-│   ├── sessions/{id}/session.json
-│   ├── attachments/{sessions|todos}/...
-│   ├── hitl-queue.json
-│   ├── permissions.json
-│   ├── todos/state.json
-│   ├── automations/state.json
-│   ├── session-cwd-migrations/
-│   └── memory/{index.md,preferences.md,knowledge/...}
-├── plans/*.md                       # ordinary Markdown Plans (plan-work)
-└── skills/**                        # project Skills
-```
-- Agent mutation tools hard-deny `.archcode/runtime/**`, mutations of ancestors that would affect that runtime tree, and `.git/**` (reads remain allowed). Direct mutations under `plans/` and `skills/` stay outside runtime and are not denied by that guard.
-- System services persist under `runtime/` via their own writers (not agent mutation tools).
+**Workspace storage:** `.archcode/runtime/` holds system-managed Sessions, attachments, HITL, permissions, Todos, Automations, cwd migrations, and project memory. `.archcode/plans/*.md` and `.archcode/skills/**` are ordinary project files; user-global `~/.archcode` is unchanged. Agent mutation tools hard-deny `.archcode/runtime/**`, mutations of ancestors affecting that tree, and `.git/**`; reads remain allowed. System services use their own runtime writers. Plans and Skills remain outside that guard.
 
 **SSE + Deferred pattern:**
 - Session streaming lives in `apps/server/src/routes/events.ts`; clients connect to `/api/projects/:slug/sessions/:sessionId/events`.
@@ -358,12 +255,12 @@ and loaded refs. Persisted records that predate those fields read with
 malformed remain invalid. No data-format version or migration framework is
 introduced for this additive read boundary.
 
-**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.{disabledBuiltins,servers}`. Each MCP server entry strictly requires `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, while STDIO uses `command`/`args`/`env`. Optional `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to 10,000/30,000/60,000 ms. Provider values are literal; MCP URL/header or STDIO env values and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
+**Config:** Only server-wide `~/.archcode/config.json` is authoritative; never search project directories for configuration. It contains Providers, required `principal`/`deep`/`fast` Profiles, and optional memory, GitHub integration, and MCP settings. Provider values are literal; MCP URL/header/STDIO environment values and GitHub token resolution retain environment-variable behavior. MCP transport rules are below.
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
 - All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
-- `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
+- `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options. Use AI SDK camelCase names.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option variants for the same model. A Profile or Session override may reference one; the variant name is consumed during resolution and never passed to the AI SDK call.
 - `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required, and unknown configuration keys fail strict validation.
 - Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A user-facing root Session override resolves independently and never inherits principal Profile options.
@@ -376,65 +273,6 @@ introduced for this additive read boundary.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
 - `maxRetries` is not a configuration field. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
 - Retry constants are internal v1 implementation details. There is no global recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
-
-Minimal example:
-```json
-{
-  "provider": {
-    "local": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "local",
-      "options": {
-        "baseURL": "http://localhost:8090/v1",
-        "apiKey": "local-dev-key"
-      },
-      "models": {
-        "glm-5": {
-          "name": "GLM-5",
-          "limit": { "context": 200000, "output": 128000 },
-          "modalities": { "input": ["text"], "output": ["text"] },
-          "options": {
-            "maxOutputTokens": 64000,
-            "temperature": 0.2,
-            "topP": 0.95,
-            "providerOptions": {
-              "local": { "reasoningEffort": "high" }
-            }
-          },
-          "variants": {
-            "fast": {
-              "maxOutputTokens": 16000,
-              "temperature": 0.1
-            },
-            "deep": {
-              "maxOutputTokens": 128000,
-              "temperature": 0.3,
-              "topP": 0.9
-            }
-          }
-        }
-      }
-    }
-  },
-  "profiles": {
-    "principal": {
-      "model": "local:glm-5",
-      "variant": "deep",
-      "options": { "temperature": 0.25 }
-    },
-    "deep": {
-      "model": "local:glm-5",
-      "variant": "deep",
-      "options": { "temperature": 0.3 }
-    },
-    "fast": {
-      "model": "local:glm-5",
-      "variant": "fast",
-      "options": { "temperature": 0.1 }
-    }
-  }
-}
-```
 
 ## Agent Architecture
 
@@ -461,22 +299,13 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) �
 
 **Workflow Skills:**
 - At every model boundary, an ordinary root Lead activates `orchestrate-work` and a root Lead with an active Goal activates `run-goal`; this reserved lifecycle slot is separate from immutable ordinary/explicit Execution Skill snapshots. Root Discussion activates `shape-todo` from its formal Session identity.
-- `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no service, state, ID, API, dedicated page, or Goal link. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
+- `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no independent service, state, ID, API, dedicated page, or Goal link; the Todo Plan endpoint only reads the fixed file. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 - A Skill is one package: required `SKILL.md`; optional `scripts/`, `references/`, `assets/`, and other contained resources. Its strict YAML frontmatter accepts `name`, `description`, optional `license`, `compatibility`, and `metadata`; `description` states both method and activation timing.
 - Skill precedence is whole-package and strict: project `.archcode/skills/<name>/` > project `.agents/skills/<name>/` > user `~/.archcode/skills/<name>/` > user `~/.agents/skills/<name>/` > embedded builtin. Bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
 - Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; the first page is `skill_list({})` or `skill_list({ agent_type })`, and continuation copies only the preceding successful page's digest-bound `nextCursor`. `skill_list({ agent_type })` may inspect one currently allowed direct child's catalog for exact `delegate.skills` names, but that target page grants no parent `skill_read` authority. Entry activation first copies an exact current-Agent name from the System Prompt or a successful `skill_list({})` result into `skill_read({ name })`; descriptions never assume one fixed Skill is valid in every runtime. That entry returns sorted resource descriptors, after which `skill_read({ name, resource })` may copy and read exactly one listed UTF-8 relative resource path. Guessed root, entry, resource, and cursor values are invalid and errors return scope-preserving retry instructions. Binary assets are valid package resources but are not returned by the text-only tool.
 - Invalid package candidates are surfaced as `SKILL_INVALID_PACKAGE` diagnostics. A winning invalid package fails closed; resolution never falls through to a lower-precedence package. The same winning package is claimed once for one explicit `/skill use` logical Execution; an in-process resume reuses that snapshot, while process-restart recovery revalidates its persisted source/digest and fails closed on change.
 - Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
-
-**MCP visibility**: User MCP servers are process-global and authorized for all
-six Agent identities from the current live runtime at the next model-call
-boundary. Their full schemas are deferred behind `tool_search`; the bounded
-per-tool Prompt projection contains each canonical name and only the first
-description line, capped at 160 characters, grouped by server. It contains no
-parameter schema and does not add an approval step. Built-in authorization
-remains the hardcoded role matrix in the MCP section below and is independent
-of user-server authorization.
 
 **Query loop lifecycle:**
 ```
@@ -498,38 +327,17 @@ Successful root Lead/Discussion terminals update the durable Memory cursor;
 `MemoryIdleCoordinator` performs automatic learning outside the Query Loop after
 10 minutes of inactivity.
 
-## Tool System
+## Tool Contracts
 
-**35+ builtin tools** (base tools via `createBuiltinToolDescriptors()`, memory, Goal, Automation, Project Todo, and GitHub connector tools — all registered in `core/register-tools.ts`):
-
-| Category | Tools | Notes |
-|----------|-------|-------|
-| File I/O | file_read✅, pdf_read✅, file_write❌, file_edit❌ | Guards: workspace, sensitive-file, read-before-edit (edit), file-exists (write). `pdf_read` extracts native text under the existing exact-path read authorization. After: read-snapshot (read), edit-error-recovery (edit) |
-| Search / AST | grep✅, glob✅, ast_grep_search✅, ast_grep_replace❌ | Search tools are workspace-scoped. `ast_grep_replace` is destructive and preview-first. |
-| Git / GitHub | git_status✅, git_diff✅, github_get_pull_request✅, github_list_pull_requests✅, github_get_pull_request_checks✅, github_list_issue_comments✅, github_create_issue_comment❌, github_list_workflow_runs✅, github_get_workflow_run✅, github_rerun_workflow_run❌ | GitHub connectors are registered globally but are not default agent tools. |
-| Shell | bash❌✅destructive | Permission: finite path-aware Bash analysis, deterministic deny/ask, default allow |
-| Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current bound root Discussion and requires `expectedRevision` |
-| Web | web_fetch✅ | — |
-| LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
-| Delegation / Skills | delegate❌, list_agents✅, send_message❌, background_output✅, wait_for_reminder✅, cancel_session❌, resume_session❌, skill_list✅, skill_read✅ | The seven control tools are explicitly configured by Lead, Discussion, Analyst, and Build; Explore and Librarian do not receive them. `delegate` accepts only strict `{ agent_type, profile, title, objective, skills, background }`; `list_agents` returns only the bounded caller-descendant Agent Tree projection; `send_message` accepts `{ session_id, expected_execution_id, message, delivery: "steer" | "queue" }` for a running direct child; `background_output` reads direct-child results; `wait_for_reminder` waits on direct children; `cancel_session` strongly cascades any descendant subtree; and `resume_session` accepts only a stopped direct child with `{ session_id, instruction, background }`. Delegated roles return ordinary final assistant text. |
-| Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results. |
-| Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | Before a root Lead calls strict `create_goal({ objective })`, it uses ordinary `ask_user` and interprets the answer semantically. Goal creation never parses an initial budget from objective text; users control budget through the Session API/UI. Before completion, Lead uses a fresh direct deep Analyst with `goal-review`, interprets its ordinary report, and calls strict `update_goal({ status, reason })`; Runtime retains only active-family and instance/generation consistency checks. |
-
-(✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
-
-**Output finalization/hooks**: standard permissions run before execution. Tool-specific after hooks still operate on raw results; Registry then finalizes once through the Tool Output Plane. Redaction is owned by the Finalizer/capture boundary, and global finalized-result hooks are **audit → logger**.
-
-**Core API**: `defineTool()` → `ToolDescriptor`. `ToolTraits: { readOnly, destructive, concurrencySafe }`. `partitionToolCalls()` groups concurrent-safe calls into parallel batches. Guards return `{ outcome: "allow" | "deny" | "ask" }`.
+- `defineTool()` produces a `ToolDescriptor` with explicit `outputPolicy` and `ToolTraits { readOnly, destructive, concurrencySafe }`. `partitionToolCalls()` batches only concurrency-safe calls. Guards return `allow | deny | ask`; `ask_user` is interactive and serial.
+- Preserve workspace/sensitive-file checks, read-before-edit snapshots, and file-exists write guards. `pdf_read` uses exact-path read authorization; search, AST, and LSP remain workspace-scoped. `ast_grep_replace` requires a preview first. Bash uses finite path-aware deny/ask analysis with default allow.
+- GitHub connectors are registered globally but are not default Agent tools. Tool visibility never grants permission.
+- `project_todo_update` derives the source Todo from the bound root Discussion and requires `expectedRevision`. `memory_write` rejects secrets.
+- Raw after hooks (including edit recovery) precede Registry finalization; finalized global hooks run audit, then logger. All Agents recover output only through authorized, bounded `output_read` / `output_search` results.
 
 ## Session Store
 
 Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and exactly one immutable `RootSessionSource` on every root: `direct`, `todo { todoId, entry }`, or `automation { automationId, invocationId, todoId }`, where Automation `todoId` is nullable; children never copy a root source. An optional `goal` belongs only to a root Lead Session. Strict identity validation requires Todo `discussion` entry ↔ Discussion Agent and every other root source ↔ Lead Agent. Persistent active Skill names are resolved when a new logical Execution is claimed; that Execution then uses immutable package snapshots through suspension and resume. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
-
-Explicit `/skill use` claims the winning Skill package once for one logical
-Execution; `skill_read` uses that Execution snapshot and a resumed Execution
-revalidates its digest before continuing. The root Lead lifecycle Skill is not
-part of that snapshot and follows the latest Goal state at each model boundary.
 
 ## Context Compaction
 
@@ -628,41 +436,17 @@ project-scoped): `GET /api/mcp/status`, `GET /api/mcp/inventory`,
 Web `GlobalSSEProvider` fetches the status snapshot on mount and after an SSE
 `reset` so late subscribers still see the current live state.
 
-## Key Dependencies
-
-- `@archcode/agent-core`: `ai` v6 + the 24 statically supported official AI SDK language Provider packages (including `@ai-sdk/openai-compatible`), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch), `unpdf` (native PDF text)
-- `@archcode/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
-- `@archcode/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
-- `@archcode/protocol`: zero runtime deps
-- `@archcode/utils`: zero runtime deps
-- Build: `vite` v6 + `@vitejs/plugin-react` + Tailwind v4 (`@tailwindcss/vite`), `typescript` v6, `turbo` v2
-
-## Environment Variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `ARCHCODE_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
-| `ARCHCODE_LOG_LEVEL` | `info` | Minimum structured log level: `debug`, `info`, `warn`, or `error` |
-| `ARCHCODE_ACCESS_LOG` | `on` | Enables (`on`) or disables (`off`) HTTP access logs independently |
-| `ARCHCODE_HOST` | unset | Externally advertised host |
-| `ARCHCODE_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
-| `ARCHCODE_PROJECTS_DIR` | unset | Base directory for project selection flows |
-| `GITHUB_TOKEN` | unset | Fallback token for GitHub.com integration when `integrations.github` is present and `tokenEnv` is unset or unresolved |
-| `GH_TOKEN` | unset | Second fallback token for GitHub.com integration. `GITHUB_TOKEN` wins when both are set |
-
 ## Conventions
 
-- Talk in chinese, code in english (include comments).
-- If you have any questions or choices, feel free to ask user.
-- Use TDD development.
+- Communicate in Chinese; write code and comments in English.
 - **When modifying the global config schema or defaults, must also update README.md config docs.**
 - **Prefer Bun-native APIs** over `node:*` imports. Use `crypto.randomUUID()`, `Bun.file()`, `Bun.write()`, `Bun.SystemError`, `import.meta.dir`. Only use `node:*` when Bun has no native alternative (e.g. `node:path` join/resolve, `node:os` tmpdir/homedir, `node:fs/promises` mkdir/rename/readdir/rm, `node:fs` sync methods).
 - Custom error classes: extend `Error`, typed constructor params, explicit `this.name = "ClassName"`, meaningful public fields.
 - Barrel exports via `index.ts`. All Zod schemas use `.strict()`.
-- Test runner: `bun:test`. Import from `"bun:test"`. Use `mock()` not `jest.fn()`. Files: `<name>.test.ts` colocated. Temp dirs: `__test_tmp__/` cleaned in `afterAll`.
-- Entry point: `apps/server/src/main.ts` boots the headless Hono server. `package.json` bin → `./apps/server/src/main.ts`.
 
 ## Repository GitHub Workflow
+
+Apply these gates when the task includes the corresponding branch, commit, push, PR, merge, or release action. A consultation, read-only audit, or local documentation edit does not by itself authorize a PR or release.
 
 - `main` is protected and accepts changes through pull requests only. Never commit or push directly to `main`.
 - Start repository work from the latest canonical `main` (`origin/main` for collaborators, `upstream/main` for forks) on a focused feature branch. Branch creation, commit, push, opening or marking a PR ready, and merge are distinct state-changing actions: perform only the actions the user requested, unless they explicitly requested the complete end-to-end PR lifecycle, and report each completed state precisely.
@@ -673,7 +457,14 @@ Web `GlobalSSEProvider` fetches the status snapshot on mount and after an SSE
 - After merge, fetch the canonical remote, switch to local `main`, fast-forward it from that remote's `main`, and verify that both refs match with a clean worktree. Report the merge commit and synchronized state separately from PR creation.
 - Release work follows the same PR loop, then verifies that the release tag points to the exact merged commit, the release workflow succeeds, the public Release and expected assets exist, and local `main` is synchronized. A green PR or a pushed tag alone is not a completed release.
 
-## Testing Patterns
+## Validation and Testing
+
+- Choose validation by changed behavior and risk. For a bug fix, prefer a regression test that demonstrates the defect. For behavior changes, cover meaningful contracts and failure cases; do not add tests that merely restate implementation details.
+- Documentation, static assets, and upstream Skill synchronization usually need scope/diff checks, format/resource checks, and upstream equality checks as applicable. Do not run unrelated business-code suites for these changes.
+- For code changes, run the relevant lanes and the checks required by `CONTRIBUTING.md` when preparing a PR. Preserve `typecheck` → `test` order. Once relevant checks pass, repeat or broaden them only for new changes, failures, or a specific unresolved concern.
+- Use `bun:test` and `mock()` (not `jest.fn()`). Colocate `<name>.test.ts`; clean `__test_tmp__/` in `afterAll`. Preserve the isolated unit/integration/architecture lanes described under Commands; do not mask flakes with concurrency or retries.
+
+Use these existing test seams when the task touches their subsystem:
 
 - Mock LLM calls through `setLlmAdapterForTest()` from `packages/agent-core/src/llm`; do not reintroduce `__setStreamTextForTest`, `__setGenerateTextForTest`, or public `llmObject()` aliases.
 - Mock LSP: `__setLspClientForTest`, `__setLspClientPoolForTest`, `__setLspTransportForTest` from `packages/agent-core/src/lsp/` respective modules
